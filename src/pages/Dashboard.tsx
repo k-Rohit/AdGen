@@ -4,8 +4,12 @@ import { Progress } from "@/components/ui/progress";
 import { Sparkles, Image, Zap, TrendingUp, Upload, Layout } from "lucide-react";
 import { Link } from "react-router-dom";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+import { useAuth } from "@/hooks/useAuth";
 
 const Dashboard = () => {
+  const { user } = useAuth();
+  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
+  
   const stats = [
     { title: "Generations This Month", value: "23", icon: Zap, trend: "+12%" },
     { title: "Credits Remaining", value: "27/50", icon: Sparkles, trend: "54%" },
@@ -28,7 +32,7 @@ const Dashboard = () => {
         {/* Header */}
         <div>
           <h1 className="text-4xl font-bold mb-2 text-foreground">
-            Welcome back, <span className="text-gradient">John</span>!
+            Welcome back, <span className="text-gradient">{userName}</span>!
           </h1>
           <p className="text-muted-foreground">Here's what's happening with your ad creations today.</p>
         </div>

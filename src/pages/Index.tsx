@@ -1,11 +1,39 @@
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Sparkles, Zap, Download, Check, Star } from "lucide-react";
+import { ArrowRight, Sparkles, Zap, Download, Check, Star, LogOut, User } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 
 const Index = () => {
   const [billingPeriod, setBillingPeriod] = useState<"monthly" | "annual">("monthly");
+  const { user, signOut } = useAuth();
+  const { toast } = useToast();
+
+  const handleSignOut = async () => {
+    try {
+      const { error } = await signOut();
+      if (error) {
+        toast({
+          title: "Sign out failed",
+          description: error.message,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Signed out successfully",
+          description: "You have been signed out.",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const features = [
     {
@@ -92,12 +120,29 @@ const Index = () => {
           </div>
           
           <div className="flex items-center space-x-4">
-            <Link to="/sign-in">
-              <Button variant="ghost">Sign In</Button>
-            </Link>
-            <Link to="/sign-up">
-              <Button>Start Free</Button>
-            </Link>
+            {user ? (
+              <>
+                <Link to="/dashboard">
+                  <Button variant="ghost">
+                    <User className="w-4 h-4 mr-2" />
+                    Dashboard
+                  </Button>
+                </Link>
+                <Button variant="outline" onClick={handleSignOut}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sign Out
+                </Button>
+              </>
+            ) : (
+              <>
+                <Link to="/sign-in">
+                  <Button variant="ghost">Sign In</Button>
+                </Link>
+                <Link to="/sign-up">
+                  <Button>Start Free</Button>
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -133,12 +178,21 @@ const Index = () => {
             </p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Link to="/sign-up">
-                <Button size="lg" className="glow group">
-                  Start Creating Free
-                  <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </Button>
-              </Link>
+              {user ? (
+                <Link to="/dashboard/create">
+                  <Button size="lg" className="glow group">
+                    Create New Ad
+                    <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  </Button>
+                </Link>
+              ) : (
+                <Link to="/sign-up">
+                  <Button size="lg" className="glow group">
+                    Start Creating Free
+                    <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  </Button>
+                </Link>
+              )}
               <Button size="lg" variant="outline" className="glass">
                 Watch Demo
               </Button>
@@ -292,9 +346,19 @@ const Index = () => {
                   ))}
                 </ul>
                 
-                <Button className="w-full" variant={plan.popular ? "default" : "outline"}>
-                  {plan.cta}
-                </Button>
+                {user ? (
+                  <Link to="/dashboard">
+                    <Button className="w-full" variant={plan.popular ? "default" : "outline"}>
+                      Go to Dashboard
+                    </Button>
+                  </Link>
+                ) : (
+                  <Link to="/sign-up">
+                    <Button className="w-full" variant={plan.popular ? "default" : "outline"}>
+                      {plan.cta}
+                    </Button>
+                  </Link>
+                )}
               </motion.div>
             ))}
           </div>

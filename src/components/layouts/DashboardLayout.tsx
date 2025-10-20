@@ -15,6 +15,8 @@ import {
   CreditCard
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -23,6 +25,8 @@ interface DashboardLayoutProps {
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
+  const { user, signOut } = useAuth();
+  const { toast } = useToast();
 
   const navItems = [
     { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
@@ -33,6 +37,30 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   ];
 
   const isActive = (path: string) => location.pathname === path;
+
+  const handleSignOut = async () => {
+    try {
+      const { error } = await signOut();
+      if (error) {
+        toast({
+          title: "Sign out failed",
+          description: error.message,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Signed out successfully",
+          description: "You have been signed out.",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const creditsUsed = 23;
   const creditsTotal = 50;
@@ -120,10 +148,18 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 <User className="w-5 h-5 text-white" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground truncate">John Doe</p>
+                <p className="text-sm font-medium text-foreground truncate">
+                  {user?.user_metadata?.full_name || user?.email || 'User'}
+                </p>
                 <p className="text-xs text-muted-foreground truncate">Pro Plan</p>
               </div>
-              <Button variant="ghost" size="icon" className="flex-shrink-0">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="flex-shrink-0"
+                onClick={handleSignOut}
+                title="Sign out"
+              >
                 <LogOut className="w-4 h-4" />
               </Button>
             </div>
