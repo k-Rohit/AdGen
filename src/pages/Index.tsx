@@ -193,7 +193,15 @@ const Index = () => {
                   </Button>
                 </Link>
               )}
-              <Button size="lg" variant="outline" className="glass">
+              <Button 
+                size="lg" 
+                variant="outline" 
+                className="glass"
+                onClick={() => {
+                  const videoSection = document.querySelector('.video-showcase');
+                  videoSection?.scrollIntoView({ behavior: 'smooth' });
+                }}
+              >
                 Watch Demo
               </Button>
             </div>
@@ -203,20 +211,87 @@ const Index = () => {
             </div>
           </motion.div>
 
-          {/* Sample Ad Showcase */}
+          {/* Video Showcase */}
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.2 }}
-            className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto"
+            className="mt-16 max-w-4xl mx-auto video-showcase"
           >
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="glass rounded-2xl p-6 hover-lift">
-                <div className="aspect-square bg-gradient-to-br from-purple-500/20 to-fuchsia-500/20 rounded-xl mb-4 flex items-center justify-center">
-                  <Sparkles className="w-12 h-12 text-primary" />
+            <div className="glass rounded-2xl p-6 hover-lift">
+              <div className="relative aspect-video bg-gradient-to-br from-purple-500/20 to-fuchsia-500/20 rounded-xl overflow-hidden">
+                <video
+                  className="w-full h-full object-cover"
+                  controls
+                  preload="metadata"
+                  muted
+                  autoPlay
+                  loop
+                  playsInline
+                >
+                  <source src="/maggie_ad.mp4" type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
+              </div>
+              <div className="mt-4 text-center">
+                <h3 className="font-semibold mb-2 text-foreground">See AdGen AI in Action</h3>
+                <p className="text-sm text-muted-foreground">Watch how we transform product images into stunning ads</p>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Sample Ad Showcase */}
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.7, delay: 0.4 }}
+            className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto"
+          >
+            {[
+              { 
+                id: 1, 
+                title: "Food & Beverage Ad", 
+                video: "/burger.mp4",
+                description: "AI-generated video ad for food products"
+              },
+              { 
+                id: 2, 
+                title: "Product Showcase", 
+                video: "/maggie_ad.mp4",
+                description: "AI-generated video ad for products"
+              },
+              { 
+                id: 3, 
+                title: "Product Showcase", 
+                video: "/shampoo.mp4",
+                description: "AI-generated video ad for products"
+              }
+            ].map((ad) => (
+              <div key={ad.id} className="glass rounded-2xl p-6 hover-lift">
+                <div className="aspect-square bg-gradient-to-br from-purple-500/20 to-fuchsia-500/20 rounded-xl mb-4 overflow-hidden relative">
+                  {ad.video ? (
+                    <video
+                      className="w-full h-full object-cover"
+                      controls
+                      preload="metadata"
+                      muted
+                      autoPlay
+                      loop
+                      playsInline
+                    >
+                      <source src={ad.video} type="video/mp4" />
+                      Your browser does not support the video tag.
+                    </video>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Sparkles className="w-12 h-12 text-primary" />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
                 </div>
-                <h3 className="font-semibold mb-2 text-foreground">Sample Ad {i}</h3>
-                <p className="text-sm text-muted-foreground">AI-generated copy and design</p>
+                <h3 className="font-semibold mb-2 text-foreground">{ad.title}</h3>
+                <p className="text-sm text-muted-foreground">{ad.description}</p>
               </div>
             ))}
           </motion.div>

@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai"
+import { supabase } from "@/lib/supabase"
 
 interface AdGenerationRequest {
   image: File
@@ -8,6 +9,7 @@ interface AdGenerationRequest {
   productDescription?: string
   includeVideoEffects?: boolean
   selectedStyle?: string
+  skipVariations?: boolean
 }
 
 interface AdGenerationResponse {
@@ -25,13 +27,12 @@ interface AdGenerationResponse {
     }
     videoUrl?: string
     videoPrompt?: string
+    generatedImages?: Array<{
+      url: string
+      style: string
+      description: string
+    }>
   }
-  error?: string
-}
-
-interface AIApiResponse {
-  success: boolean
-  data?: AdGenerationResponse
   error?: string
 }
 
@@ -46,76 +47,89 @@ class AIService {
     this.googleApiKey = import.meta.env.VITE_GOOGLE_API_KEY || ''
     this.openaiBaseUrl = 'https://api.openai.com/v1'
     
+    console.log('🔑 Environment check:')
+    console.log('  - OpenAI API Key:', this.openaiApiKey ? '✅ Available' : '❌ Missing')
+    console.log('  - Google API Key:', this.googleApiKey ? '✅ Available' : '❌ Missing')
+    console.log('  - Google API Key length:', this.googleApiKey.length)
+    console.log('  - Google API Key starts with:', this.googleApiKey.substring(0, 10) + '...')
+    
     if (this.googleApiKey) {
-      console.log('🔑 Initializing Google GenAI with API key (first 10 chars):', this.googleApiKey.substring(0, 10))
-      console.log('🔑 API key length:', this.googleApiKey.length)
-      
+      console.log('🔑 Initializing Google GenAI')
       try {
-        // Initialize Google GenAI with API key (required for browser usage)
         this.googleGenAI = new GoogleGenAI({
           apiKey: this.googleApiKey
         })
         console.log('✅ Google GenAI initialized successfully')
+        console.log('✅ Google GenAI object:', !!this.googleGenAI)
+        
       } catch (error) {
         console.error('❌ Failed to initialize Google GenAI:', error)
+        this.googleGenAI = null
       }
     } else {
-      console.warn('⚠️ No Google API key found in environment variables')
+      console.warn('⚠️ No Google API key found')
+      this.googleGenAI = null
     }
+  }
+
+
+  // Simple wrapper: analyze image then generate video using Veo
+  async generateVideoSimple(
+    imageFile: File,
+    selectedStyle?: string
+  ): Promise<{ videoUrl?: string; videoPrompt: string }> {
+    // Ensure Google GenAI is available (will throw inside generateVideoWithVeo otherwise)
+    const imageBase64 = await this.fileToBase64(imageFile)
+    const imageAnalysis = await this.analyzeImageWithGPT4oMini(imageBase64)
+    return this.generateVideoWithVeo(imageFile, imageAnalysis, selectedStyle)
   }
 
   async generateAd(request: AdGenerationRequest): Promise<AdGenerationResponse> {
     try {
-      console.log('🚀 Starting image analysis and video generation...')
+      console.log('🚀 Starting AI generation process...')
       
-      // Convert image to base64 for API
+      // Convert image to base64
       const imageBase64 = await this.fileToBase64(request.image)
-      console.log('📸 Image converted to base64, length:', imageBase64.length)
       
-      // Analyze image with GPT-4o-mini
-      console.log('🔍 Analyzing image with GPT-4o-mini...')
+      // Step 1: Analyze image with GPT-4o-mini
+      console.log('🔍 Analyzing image...')
       const imageAnalysis = await this.analyzeImageWithGPT4oMini(imageBase64)
-      console.log('✅ Image analysis complete:', imageAnalysis)
       
-      // Generate video with Google Veo 3.1
+      // Step 2: Generate style variations with Gemini Flash 2.5 (optional)
+      let generatedImages: Array<{url: string, style: string, description: string}> | undefined = undefined
+      if (!request.skipVariations) {
+        console.log('🎨 Generating image variations...')
+        generatedImages = await this.generateImageVariations(request.image, imageAnalysis, request.selectedStyle)
+      }
+      
+      // Step 3: Generate video with Google Veo 3.1
       let videoUrl = undefined
       let videoPrompt = undefined
       
       if (request.includeVideoEffects && this.googleGenAI) {
-        console.log('🎬 Generating video with Google Veo 3.1...')
+        console.log('🎬 Generating video...')
         const videoResult = await this.generateVideoWithVeo(request.image, imageAnalysis, request.selectedStyle)
         videoUrl = videoResult.videoUrl
         videoPrompt = videoResult.videoPrompt
-        console.log('✅ Video generation complete:', videoResult)
-        // Hard fallback to a known-good sample if API returned no playable URL
-        if (!videoUrl) {
-          console.warn('⚠️ Video URL was undefined. Falling back to sample video URL for reliability')
-          videoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
-        }
-      } else if (request.includeVideoEffects) {
-        console.log('⚠️ Video effects requested but no Google API key found, using sample video')
-        // Use a sample video for testing when no API key is available
-        videoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
-        videoPrompt = 'Sample video for testing - Add Google API key for real video generation'
+        console.log('✅ Video URL:', videoUrl)
       }
-      
-      console.log('🎬 Final video URL being returned:', videoUrl)
       
       return {
         id: `gen_${Date.now()}`,
         status: 'completed',
         generatedContent: {
-          imageAnalysis: imageAnalysis,
-          videoUrl: videoUrl,
-          videoPrompt: videoPrompt
+          imageAnalysis,
+          videoUrl,
+          videoPrompt,
+          generatedImages
         }
       }
     } catch (error) {
-      console.error('AI generation error:', error)
+      console.error('❌ AI generation error:', error)
       return {
         id: `gen_${Date.now()}`,
         status: 'failed',
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
+        error: error instanceof Error ? error.message : 'Unknown error'
       }
     }
   }
@@ -126,174 +140,24 @@ class AIService {
       reader.readAsDataURL(file)
       reader.onload = () => {
         const result = reader.result as string
-        resolve(result.split(',')[1]) // Remove data:image/...;base64, prefix
+        resolve(result.split(',')[1])
       }
       reader.onerror = error => reject(error)
     })
   }
 
-  private createAdvancedPrompt(imageAnalysis: any, request: AdGenerationRequest): string {
-    const { format, tone, template, productDescription } = request
-    
-    const formatDescriptions = {
-      square: 'Instagram post (1:1 aspect ratio)',
-      story: 'Instagram/Facebook story (9:16 aspect ratio)',
-      landscape: 'YouTube/Facebook ad banner (16:9 aspect ratio)'
-    }
-
-    const toneDescriptions = {
-      professional: 'formal, trustworthy, and business-focused',
-      casual: 'friendly, approachable, and relaxed',
-      luxury: 'premium, exclusive, and high-end',
-      playful: 'fun, energetic, and creative'
-    }
-
-    return `
-    Based on the following product analysis, generate compelling ad copy for a ${formatDescriptions[format]} with a ${toneDescriptions[tone]} tone.
-
-    PRODUCT ANALYSIS:
-    - Product Type: ${imageAnalysis.productType}
-    - Colors: ${imageAnalysis.colors.join(', ')}
-    - Style: ${imageAnalysis.style}
-    - Mood: ${imageAnalysis.mood}
-    - Key Features: ${imageAnalysis.keyFeatures.join(', ')}
-    
-    AD SPECIFICATIONS:
-    - Format: ${format}
-    - Tone: ${tone}
-    - Template: ${template}
-    ${productDescription ? `- Additional Description: ${productDescription}` : ''}
-    
-    Please provide the following in a structured format:
-    
-    HEADLINES:
-    1. [Headline 1 - max 30 characters]
-    2. [Headline 2 - max 30 characters]
-    3. [Headline 3 - max 30 characters]
-    4. [Headline 4 - max 30 characters]
-    
-    DESCRIPTIONS:
-    1. [Description 1 - max 100 characters]
-    2. [Description 2 - max 100 characters]
-    3. [Description 3 - max 100 characters]
-    
-    CALL TO ACTIONS:
-    1. [CTA 1 - max 15 characters]
-    2. [CTA 2 - max 15 characters]
-    3. [CTA 3 - max 15 characters]
-    4. [CTA 4 - max 15 characters]
-    
-    DESIGN SUGGESTIONS:
-    1. [Design suggestion 1]
-    2. [Design suggestion 2]
-    3. [Design suggestion 3]
-    4. [Design suggestion 4]
-    
-    Make sure the copy leverages the product's ${imageAnalysis.style} style and ${imageAnalysis.mood} mood, uses the color palette (${imageAnalysis.colors.join(', ')}), and highlights the key features: ${imageAnalysis.keyFeatures.join(', ')}.
-    `
-  }
-
-  private parseAdCopy(copyText: string): any {
-    // Parse the structured response from GPT-4o-mini
-    const lines = copyText.split('\n').filter(line => line.trim())
-    
-    const headlines: string[] = []
-    const descriptions: string[] = []
-    const callToActions: string[] = []
-    const designSuggestions: string[] = []
-    
-    let currentSection = ''
-    
-    for (const line of lines) {
-      const trimmedLine = line.trim()
-      
-      if (trimmedLine.includes('HEADLINES:')) {
-        currentSection = 'headlines'
-        continue
-      } else if (trimmedLine.includes('DESCRIPTIONS:')) {
-        currentSection = 'descriptions'
-        continue
-      } else if (trimmedLine.includes('CALL TO ACTIONS:')) {
-        currentSection = 'ctas'
-        continue
-      } else if (trimmedLine.includes('DESIGN SUGGESTIONS:')) {
-        currentSection = 'design'
-        continue
-      }
-      
-      // Extract content from numbered lines
-      const match = trimmedLine.match(/^\d+\.\s*(.+)$/)
-      if (match) {
-        const content = match[1].trim()
-        
-        switch (currentSection) {
-          case 'headlines':
-            headlines.push(content)
-            break
-          case 'descriptions':
-            descriptions.push(content)
-            break
-          case 'ctas':
-            callToActions.push(content)
-            break
-          case 'design':
-            designSuggestions.push(content)
-            break
-        }
-      }
-    }
-    
-    // Fallback to mock data if parsing fails
-    if (headlines.length === 0) {
-      return {
-        headlines: [
-          'Transform Your Style Today',
-          'Discover the Perfect Look',
-          'Elevate Your Wardrobe',
-          'Style That Speaks to You'
-        ],
-        descriptions: [
-          'Experience the perfect blend of comfort and style with our premium collection.',
-          'Make a statement with designs that reflect your unique personality.',
-          'Quality meets fashion in every piece of our carefully curated selection.'
-        ],
-        callToActions: [
-          'Shop Now',
-          'Discover More',
-          'Get Yours Today',
-          'Explore Collection'
-        ],
-        designSuggestions: [
-          'Use bold typography with contrasting colors',
-          'Incorporate lifestyle imagery with the product',
-          'Add subtle gradients for modern appeal',
-          'Include social proof elements'
-        ]
-      }
-    }
-    
-    return {
-      headlines,
-      descriptions,
-      callToActions,
-      designSuggestions
-    }
-  }
-
   private async analyzeImageWithGPT4oMini(imageBase64: string): Promise<any> {
     if (!this.openaiApiKey) {
-      console.log('⚠️ No OpenAI API key found, using mock image analysis')
+      console.warn('⚠️ No OpenAI API key, using mock analysis')
       return {
-        productType: 'Fashion Item',
+        productType: 'Product',
         colors: ['#FF6B6B', '#4ECDC4', '#45B7D1'],
-        style: 'Modern and trendy',
-        mood: 'Energetic and vibrant',
-        keyFeatures: ['High quality material', 'Contemporary design', 'Versatile styling'],
-        description: 'This is a mock analysis. Add your OpenAI API key to see real analysis.'
+        style: 'Modern',
+        mood: 'Professional',
+        keyFeatures: ['High quality', 'Contemporary design'],
+        description: 'Mock analysis - Add OpenAI API key for real analysis'
       }
     }
-
-    console.log('🔑 OpenAI API key found, calling GPT-4o-mini for image analysis')
 
     try {
       const response = await fetch(`${this.openaiBaseUrl}/chat/completions`, {
@@ -307,14 +171,14 @@ class AIService {
           messages: [
             {
               role: 'system',
-              content: 'You are an expert product analyst. Analyze the uploaded image and tell me what you see. Be specific and detailed.'
+              content: 'You are an expert product analyst. Analyze images and provide detailed product insights.'
             },
             {
               role: 'user',
               content: [
                 {
                   type: 'text',
-                  text: 'What do you see in this image? Please describe the product, its colors, style, and any other details you notice. Be specific about what type of product it is.'
+                  text: 'Analyze this product image. Describe the product type, main colors, style, mood, and key features. Be specific and detailed.'
                 },
                 {
                   type: 'image_url',
@@ -338,9 +202,6 @@ class AIService {
       const data = await response.json()
       const analysisText = data.choices[0]?.message?.content || ''
       
-      console.log('📝 GPT-4o-mini response:', analysisText)
-      
-      // Return the raw analysis text for now
       return {
         productType: 'Product',
         colors: ['#FF6B6B', '#4ECDC4', '#45B7D1'],
@@ -351,55 +212,22 @@ class AIService {
         rawAnalysis: analysisText
       }
     } catch (error) {
-      console.error('Image analysis error:', error)
-      return {
-        productType: 'Product',
-        colors: ['#FF6B6B', '#4ECDC4', '#45B7D1'],
-        style: 'Modern',
-        mood: 'Professional',
-        keyFeatures: ['High quality', 'Contemporary design'],
-        description: `Error analyzing image: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        rawAnalysis: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`
-      }
+      console.error('❌ Image analysis error:', error)
+      throw error
     }
   }
 
-  private async generateAdCopy(imageAnalysis: any, request: AdGenerationRequest): Promise<any> {
+  private async generateVariationPromptsWithOpenAI(
+    imageFile: File, 
+    imageAnalysis: any
+  ): Promise<Array<{name: string, prompt: string, description: string}>> {
     if (!this.openaiApiKey) {
-      console.log('⚠️ No OpenAI API key found, using mock ad copy')
-      // Return mock ad copy if no API key
-      return {
-        headlines: [
-          'Transform Your Style Today',
-          'Discover the Perfect Look',
-          'Elevate Your Wardrobe',
-          'Style That Speaks to You'
-        ],
-        descriptions: [
-          'Experience the perfect blend of comfort and style with our premium collection.',
-          'Make a statement with designs that reflect your unique personality.',
-          'Quality meets fashion in every piece of our carefully curated selection.'
-        ],
-        callToActions: [
-          'Shop Now',
-          'Discover More',
-          'Get Yours Today',
-          'Explore Collection'
-        ],
-        designSuggestions: [
-          'Use bold typography with contrasting colors',
-          'Incorporate lifestyle imagery with the product',
-          'Add subtle gradients for modern appeal',
-          'Include social proof elements'
-        ]
-      }
+      throw new Error('OpenAI API key not available')
     }
 
-    const prompt = this.createAdvancedPrompt(imageAnalysis, request)
-    console.log('🔑 OpenAI API key found, calling GPT-4o-mini for ad copy generation')
-    console.log('📝 Generated prompt:', prompt)
-    
     try {
+      const imageBase64 = await this.fileToBase64(imageFile)
+      
       const response = await fetch(`${this.openaiBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -411,15 +239,48 @@ class AIService {
           messages: [
             {
               role: 'system',
-              content: 'You are an expert copywriter specializing in creating compelling ad copy for social media and digital marketing campaigns. Create copy that converts based on product analysis and user preferences.'
+              content: `You are a creative AI assistant that generates image variation prompts for product photography. 
+              Analyze the uploaded product image and create 3 distinct, creative prompts for generating different visual styles of the same product.
+              
+              Return your response as a JSON array with this exact format:
+              [
+                {
+                  "name": "Style Name",
+                  "prompt": "Detailed prompt for image generation",
+                  "description": "Brief description of the style"
+                }
+              ]
+              
+              Make the prompts creative, specific, and focused on different visual approaches like lighting, composition, colors, mood, or artistic style.`
             },
             {
               role: 'user',
-              content: prompt
+              content: [
+                {
+                  type: 'text',
+                  text: `Analyze this product image and create 3 creative variation prompts. The product appears to be: ${imageAnalysis.productType || 'a product'}. 
+                  Current style: ${imageAnalysis.style || 'unknown'}, Mood: ${imageAnalysis.mood || 'unknown'}.
+                  
+                  Create 3 distinct visual styles that would showcase this product in different ways. Focus on:
+                  1. Different lighting setups
+                  2. Various color schemes
+                  3. Different compositions or angles
+                  4. Various moods or atmospheres
+                  
+                  Make each prompt detailed and specific for image generation.`
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:image/jpeg;base64,${imageBase64}`,
+                    detail: 'high'
+                  }
+                }
+              ]
             }
           ],
-          max_tokens: 1500,
-          temperature: 0.7,
+          max_tokens: 1000,
+          temperature: 0.8,
         }),
       })
 
@@ -428,55 +289,330 @@ class AIService {
       }
 
       const data = await response.json()
-      const copyText = data.choices[0]?.message?.content || ''
+      const responseText = data.choices[0]?.message?.content || ''
       
-      // Parse the response to extract structured content
-      return this.parseAdCopy(copyText)
-    } catch (error) {
-      console.error('Ad copy generation error:', error)
-      // Return mock data on error
-      return {
-        headlines: [
-          'Transform Your Style Today',
-          'Discover the Perfect Look',
-          'Elevate Your Wardrobe',
-          'Style That Speaks to You'
-        ],
-        descriptions: [
-          'Experience the perfect blend of comfort and style with our premium collection.',
-          'Make a statement with designs that reflect your unique personality.',
-          'Quality meets fashion in every piece of our carefully curated selection.'
-        ],
-        callToActions: [
-          'Shop Now',
-          'Discover More',
-          'Get Yours Today',
-          'Explore Collection'
-        ],
-        designSuggestions: [
-          'Use bold typography with contrasting colors',
-          'Incorporate lifestyle imagery with the product',
-          'Add subtle gradients for modern appeal',
-          'Include social proof elements'
-        ]
+      // Parse JSON response
+      let cleanResponse = responseText.trim()
+      if (cleanResponse.startsWith('```json')) {
+        cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+      } else if (cleanResponse.startsWith('```')) {
+        cleanResponse = cleanResponse.replace(/^```\s*/, '').replace(/\s*```$/, '')
       }
+      
+      const prompts = JSON.parse(cleanResponse)
+      
+      // Validate and ensure we have exactly 3 prompts
+      if (Array.isArray(prompts) && prompts.length >= 3) {
+        return prompts.slice(0, 3).map((p: any) => ({
+          name: p.name || 'Generated Style',
+          prompt: p.prompt || 'Transform this product with creative styling',
+          description: p.description || 'AI-generated variation'
+        }))
+      } else {
+        throw new Error('Invalid response format from OpenAI')
+      }
+    } catch (error) {
+      console.error('❌ OpenAI prompt generation error:', error)
+      throw error
     }
   }
 
-  private async generateVideoWithVeo(imageFile: File, imageAnalysis: any, selectedStyle?: string): Promise<{videoUrl?: string, videoPrompt: string}> {
+  async generateImageVariations(
+    imageFile: File, 
+    imageAnalysis: any, 
+    selectedStyle?: string,
+    userId?: string
+  ): Promise<Array<{url: string, style: string, description: string}>> {
+    console.log('🎨 Starting image variation generation...')
+    console.log('🔑 Google API Key available:', !!this.googleApiKey)
+    console.log('🔑 OpenAI API Key available:', !!this.openaiApiKey)
+    console.log('🤖 Google GenAI initialized:', !!this.googleGenAI)
+    
+    // First, try to generate creative prompts using OpenAI
+    let variationPrompts: Array<{name: string, prompt: string, description: string}> = []
+    
+    if (this.openaiApiKey) {
+      try {
+        console.log('🎨 Generating creative prompts with OpenAI...')
+        variationPrompts = await this.generateVariationPromptsWithOpenAI(imageFile, imageAnalysis)
+        console.log('🎨 Generated prompts:', variationPrompts)
+      } catch (error) {
+        console.warn('⚠️ Failed to generate prompts with OpenAI:', error)
+      }
+    }
+    
+    // Fallback to default prompts if OpenAI fails
+    if (variationPrompts.length === 0) {
+      console.log('🎨 Using default variation prompts')
+      variationPrompts = [
+        {
+          name: 'Modern Minimal',
+          prompt: 'Transform this product into a modern minimal style with clean lines, soft colors, and contemporary design. Keep the product recognizable but apply minimalist aesthetics.',
+          description: 'Clean and contemporary design'
+        },
+        {
+          name: 'Bold Dynamic',
+          prompt: 'Transform this product into a bold dynamic style with vibrant colors, strong contrast, and energetic composition. Keep the product recognizable but apply dynamic visual impact.',
+          description: 'Strong visual impact'
+        },
+        {
+          name: 'Luxury Premium',
+          prompt: 'Transform this product into a luxury premium style with elegant lighting, rich tones, and sophisticated composition. Keep the product recognizable but apply high-end aesthetics.',
+          description: 'High-end aesthetic'
+        }
+      ]
+    }
+    
+    // Don't include the original image - only show AI-generated variations
+    const originalUrl = URL.createObjectURL(imageFile)
+    const generatedImages: Array<{url: string, style: string, description: string}> = []
+    
+    // Only proceed if Google API is available
+    if (!this.googleGenAI || !this.googleApiKey) {
+      console.error('❌ Google GenAI not available - cannot generate images')
+      console.error('❌ Google API Key available:', !!this.googleApiKey)
+      console.error('❌ Google GenAI initialized:', !!this.googleGenAI)
+      throw new Error('Google API is required for image generation. Please add VITE_GOOGLE_API_KEY to your environment variables.')
+    }
+    
+    console.log('✅ Google API is available, proceeding with real image generation')
+    console.log('🔑 Google API Key available:', !!this.googleApiKey)
+    console.log('🤖 Google GenAI initialized:', !!this.googleGenAI)
+
+    try {
+      console.log('🎨 Generating image variations with Google Gemini...')
+      
+      // Generate images using the prompts from OpenAI (or default prompts)
+      for (const promptData of variationPrompts) {
+        try {
+          console.log(`🎨 Generating ${promptData.name} variation...`)
+          console.log(`🎨 Using prompt: ${promptData.prompt}`)
+          
+          // Use the exact structure from your working example
+          const config = {
+            responseModalities: ['IMAGE', 'TEXT'],
+          };
+          
+          const contents = [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: promptData.prompt,
+                },
+              ],
+            },
+          ];
+
+          console.log('🎨 Calling Google Gemini API with config:', config)
+          console.log('🎨 Contents:', JSON.stringify(contents, null, 2))
+          
+          const response = await this.googleGenAI.models.generateContentStream({
+            model: 'gemini-2.5-flash-image',
+            config,
+            contents,
+          });
+          
+          console.log('🎨 Got response from Google Gemini')
+
+          let imageGenerated = false;
+          let fileIndex = 0;
+          for await (const chunk of response) {
+            console.log('🎨 Processing chunk:', JSON.stringify(chunk, null, 2));
+            
+            if (!chunk.candidates || !chunk.candidates[0].content || !chunk.candidates[0].content.parts) {
+              console.log('🎨 Skipping chunk - no candidates/content/parts');
+              continue;
+            }
+            
+            if (chunk.candidates?.[0]?.content?.parts?.[0]?.inlineData) {
+              console.log('🎨 Found inline data in chunk!');
+              const fileName = `variation_${promptData.name}_${Date.now()}_${fileIndex++}.png`;
+              const inlineData = chunk.candidates[0].content.parts[0].inlineData;
+              
+              console.log('🎨 Inline data details:', {
+                mimeType: inlineData.mimeType,
+                dataLength: inlineData.data?.length,
+                hasData: !!inlineData.data
+              });
+              
+              if (!inlineData.data) {
+                console.warn('⚠️ No data in inlineData');
+                continue;
+              }
+              
+              // Convert base64 to Uint8Array (browser compatible)
+              const binaryString = atob(inlineData.data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              console.log('🎨 Bytes created, size:', bytes.length);
+              
+              // Create blob
+              const imageBlob = new Blob([bytes], { type: inlineData.mimeType || 'image/png' });
+              console.log('🎨 Blob created, size:', imageBlob.size, 'type:', imageBlob.type);
+              
+              let imageUrl: string;
+              
+              // Try to save to Supabase if userId is provided
+              if (userId) {
+                try {
+                  console.log('💾 Attempting to save to Supabase...');
+                  imageUrl = await this.saveImageToSupabase(imageBlob, fileName, userId);
+                  console.log('✅ Saved to Supabase:', imageUrl);
+                } catch (error) {
+                  console.warn('⚠️ Failed to save to Supabase, using blob URL:', error);
+                  imageUrl = URL.createObjectURL(imageBlob);
+                }
+              } else {
+                imageUrl = URL.createObjectURL(imageBlob);
+                console.log('🎨 Created blob URL:', imageUrl);
+              }
+            
+            generatedImages.push({
+              url: imageUrl,
+                style: promptData.name,
+                description: promptData.description
+              });
+              console.log(`✅ Generated ${promptData.name} variation with URL: ${imageUrl}`);
+              
+              // Save metadata to database if userId is provided
+              if (userId) {
+                await this.saveImageVariationToDatabase(
+                  userId,
+                  promptData.name,
+                  promptData.description,
+                  imageUrl,
+                  promptData.prompt,
+                  originalUrl
+                );
+              }
+              
+              imageGenerated = true;
+              break; // We got an image, move to next style
+            } else if (chunk.candidates?.[0]?.content?.parts?.[0]?.text) {
+              console.log('🎨 Got text response:', chunk.candidates[0].content.parts[0].text);
+            }
+          }
+          
+          if (!imageGenerated) {
+            console.error(`❌ No image generated for ${promptData.name}`)
+            throw new Error(`Failed to generate image for ${promptData.name}`)
+          }
+        } catch (styleError) {
+          console.error(`❌ Failed to generate ${promptData.name}:`, styleError)
+          throw new Error(`Failed to generate image for ${promptData.name}: ${styleError}`)
+        }
+      }
+
+      console.log('🎨 Final generated images:', generatedImages)
+      return generatedImages
+      
+    } catch (error) {
+      console.error('❌ Image generation error:', error)
+      throw error
+    }
+  }
+
+
+  private async saveImageToSupabase(
+    imageBlob: Blob, 
+    fileName: string, 
+    userId: string
+  ): Promise<string> {
+    try {
+      console.log('💾 Saving image to Supabase storage:', fileName)
+      
+      const { data, error } = await supabase.storage
+        .from('generated-images')
+        .upload(`${userId}/${fileName}`, imageBlob, {
+          contentType: imageBlob.type,
+          upsert: false
+        })
+      
+      if (error) {
+        console.error('❌ Error uploading to Supabase:', error)
+        throw error
+      }
+      
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('generated-images')
+        .getPublicUrl(`${userId}/${fileName}`)
+      
+      console.log('✅ Image saved to Supabase:', urlData.publicUrl)
+      return urlData.publicUrl
+    } catch (error) {
+      console.error('❌ Failed to save image to Supabase:', error)
+      throw error
+    }
+  }
+
+  private async saveImageVariationToDatabase(
+    userId: string,
+    variationName: string,
+    variationDescription: string,
+    generatedImageUrl: string,
+    promptUsed: string,
+    originalImageUrl?: string
+  ): Promise<void> {
+    try {
+      console.log('💾 Saving image variation metadata to database')
+      console.log('💾 User ID:', userId)
+      console.log('💾 Variation name:', variationName)
+      console.log('💾 Generated URL:', generatedImageUrl)
+      
+      // First, test if the table exists
+      const { data: testData, error: testError } = await supabase
+        .from('image_variations')
+        .select('id')
+        .limit(1)
+      
+      if (testError) {
+        console.error('❌ Table does not exist or access denied:', testError)
+        console.error('❌ Please run the supabase-setup.sql script first')
+        return
+      }
+      
+      const { error } = await supabase
+        .from('image_variations')
+        .insert({
+          user_id: userId,
+          original_image_url: originalImageUrl,
+          variation_name: variationName,
+          variation_description: variationDescription,
+          generated_image_url: generatedImageUrl,
+          prompt_used: promptUsed
+        })
+      
+      if (error) {
+        console.error('❌ Error saving to database:', error)
+        throw error
+      }
+      
+      console.log('✅ Image variation metadata saved to database')
+    } catch (error) {
+      console.error('❌ Failed to save metadata to database:', error)
+      // Don't throw - this is not critical for the main flow
+    }
+  }
+
+  private async generateVideoWithVeo(
+    imageFile: File, 
+    imageAnalysis: any, 
+    selectedStyle?: string
+  ): Promise<{videoUrl?: string, videoPrompt: string}> {
     if (!this.googleGenAI) {
       throw new Error('Google GenAI not initialized')
     }
 
     try {
-      // Create a video prompt based on the image analysis and selected style
       const videoPrompt = this.createVideoPrompt(imageAnalysis, selectedStyle)
-      console.log('🎬 Video prompt created:', videoPrompt)
+      console.log('🎬 Video prompt:', videoPrompt)
 
-      // Convert image file to base64 for API
       const imageBase64 = await this.fileToBase64(imageFile)
       
-      // Generate video with Veo 3.1 using the uploaded image
       console.log('🎬 Starting Veo 3.1 video generation...')
       let operation = await this.googleGenAI.models.generateVideos({
         model: "veo-3.1-generate-preview",
@@ -487,189 +623,120 @@ class AIService {
         },
       })
 
-      console.log('🎬 Video generation operation started, polling for completion...')
+      console.log('🎬 Polling for video completion...')
       
-      // Poll the operation status until the video is ready
-      while (!operation.done) {
-        console.log("⏳ Waiting for video generation to complete...")
-        await new Promise((resolve) => setTimeout(resolve, 10000)) // Wait 10 seconds
+      // Poll until complete (max 2 minutes)
+      const maxAttempts = 12
+      let attempts = 0
+      
+      while (!operation.done && attempts < maxAttempts) {
+        console.log(`⏳ Attempt ${attempts + 1}/${maxAttempts}...`)
+        await new Promise(resolve => setTimeout(resolve, 10000)) // 10 seconds
+        
         operation = await this.googleGenAI.operations.getVideosOperation({
           operation: operation,
         })
+        
+        attempts++
+      }
+
+      if (!operation.done) {
+        throw new Error('Video generation timeout')
       }
 
       console.log('✅ Video generation completed!')
-      console.log('📊 Operation response:', operation.response)
       
-      // Get the video file URL from the operation response
-      if (operation.response?.generatedVideos?.[0]?.video) {
+      // Extract video URL
+      if (operation.response?.generatedVideos?.[0]?.video?.uri) {
+        const videoUri = operation.response.generatedVideos[0].video.uri
+        console.log('📹 Video URI:', videoUri)
+
+        // Download video and create blob URL
         try {
-          const videoObject = operation.response.generatedVideos[0].video
+          // Add API key to URL for authentication (handle existing query string)
+          const separator = videoUri.includes('?') ? '&' : '?'
+          const videoUrl = `${videoUri}${separator}key=${this.googleApiKey}`
+          console.log('📹 Fetching video from:', videoUrl)
           
-          if (!videoObject.uri) {
-            throw new Error('Generated video is missing a URI.')
-          }
+          const response = await fetch(videoUrl)
           
-          console.log('📹 Video object:', videoObject)
-          console.log('📹 Video URI:', videoObject.uri)
-
-          // Try using the Google GenAI library's download method
-          try {
-            console.log('📹 Attempting library download...')
-            // The library download method requires a downloadPath parameter
-            await this.googleGenAI!.files.download({
-              file: videoObject,
-              downloadPath: 'temp_video.mp4'
-            })
-            
-            // Since the library download saves to a file path (not suitable for browser),
-            // we'll fall through to the direct fetch method
-            throw new Error('Library download not suitable for browser, using direct fetch')
-          } catch (libraryDownloadError) {
-            console.warn('Library download not suitable for browser, using direct fetch:', libraryDownloadError)
-            
-            // Fallback to direct fetch with proper authentication
-            const url = decodeURIComponent(videoObject.uri)
-            console.log('📹 Fetching video from:', url)
-
-            // Add API key to the URL for direct fetch
-            const res = await fetch(`${url}&key=${this.googleApiKey}`)
-
-            if (!res.ok) {
-              throw new Error(`Failed to fetch video: ${res.status} ${res.statusText}`)
-            }
-
-            const videoBlob = await res.blob()
-            const objectUrl = URL.createObjectURL(videoBlob)
-            
-            console.log('📹 Video downloaded via direct fetch and converted to blob URL:', objectUrl)
-            
-            return {
-              videoUrl: objectUrl,
-              videoPrompt: videoPrompt
-            }
+          if (!response.ok) {
+            throw new Error(`Video fetch failed: ${response.status}`)
           }
-        } catch (downloadError) {
-          console.error('Error downloading video:', downloadError)
-          // Final fallback to sample video so UI always has a playable source
+
+          const videoBlob = await response.blob()
+          const blobUrl = URL.createObjectURL(videoBlob)
+          
+          console.log('✅ Video blob URL created:', blobUrl)
+          
           return {
-            videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+            videoUrl: blobUrl,
             videoPrompt: videoPrompt
           }
+        } catch (fetchError) {
+          console.error('❌ Video fetch error:', fetchError)
+          throw fetchError
         }
       }
       
-      // Fallback if no video is generated
-      return {
-        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-        videoPrompt: videoPrompt
-      }
+      throw new Error('No video generated')
       
     } catch (error) {
-      console.error('Video generation error:', error)
-      throw error
+      console.error('❌ Video generation error:', error)
+      // Return fallback video
+      return {
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+        videoPrompt: 'Fallback video due to generation error'
+      }
     }
   }
 
   private createVideoPrompt(imageAnalysis: any, selectedStyle?: string): string {
     const { productType, style, mood } = imageAnalysis
     
-    // Create simple, creative prompts based on product type and style
-    const creativePrompts = {
-      fashion: [
-        `Elegant slow-motion showcase of ${productType} with flowing fabric movement`,
-        `Dynamic 360° rotation of ${productType} with dramatic lighting`,
-        `Cinematic close-up reveal of ${productType} with smooth transitions`
-      ],
-      tech: [
-        `Sleek product reveal with glowing effects and modern aesthetics`,
-        `Dynamic zoom-in on ${productType} with futuristic lighting`,
-        `Smooth rotation showcase with holographic elements`
-      ],
-      beauty: [
-        `Soft, dreamy presentation of ${productType} with ethereal lighting`,
-        `Gentle application showcase with smooth, flowing movements`,
-        `Elegant close-up reveal with soft focus and warm tones`
-      ],
-      default: [
-        `Dynamic product showcase with smooth camera movements`,
-        `Creative reveal of ${productType} with artistic lighting`,
-        `Elegant presentation with cinematic transitions`
-      ]
-    }
+    const basePrompts = [
+      `Elegant showcase of ${productType} with smooth camera movement and professional lighting`,
+      `Dynamic 360° rotation of ${productType} with cinematic aesthetics`,
+      `Creative reveal of ${productType} with artistic transitions and modern style`
+    ]
     
-    // Determine product category
-    let category = 'default'
-    if (productType?.toLowerCase().includes('fashion') || productType?.toLowerCase().includes('clothing')) {
-      category = 'fashion'
-    } else if (productType?.toLowerCase().includes('tech') || productType?.toLowerCase().includes('electronic')) {
-      category = 'tech'
-    } else if (productType?.toLowerCase().includes('beauty') || productType?.toLowerCase().includes('cosmetic')) {
-      category = 'beauty'
-    }
+    const selectedPrompt = basePrompts[Math.floor(Math.random() * basePrompts.length)]
     
-    // Select a random creative prompt
-    const prompts = creativePrompts[category as keyof typeof creativePrompts]
-    const selectedPrompt = prompts[Math.floor(Math.random() * prompts.length)]
-    
-    // Add style modifier if provided
     let finalPrompt = selectedPrompt
     if (selectedStyle) {
-      finalPrompt = `${selectedStyle} style: ${selectedPrompt}`
-    } else if (style) {
-      finalPrompt = `${style} style: ${selectedPrompt}`
+      finalPrompt = `${selectedStyle}: ${selectedPrompt}`
     }
-    
-    // Add mood if available
     if (mood) {
       finalPrompt += ` with ${mood} atmosphere`
     }
     
-    console.log('🎬 Creative Veo prompt created:', finalPrompt)
     return finalPrompt
   }
 
-  private async fileToArrayBuffer(file: File): Promise<ArrayBuffer> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as ArrayBuffer)
-      reader.onerror = reject
-      reader.readAsArrayBuffer(file)
-    })
-  }
-
-  // Generate different image styles using Gemini Flash
   async generateImageStyles(imageFile: File): Promise<{styles: Array<{name: string, description: string, prompt: string}>}> {
-    console.log('🎨 Starting image style generation for file:', imageFile.name)
+    console.log('🎨 Generating image styles...')
     
     if (!this.googleGenAI) {
-      console.warn('⚠️ Google GenAI not available, returning mock styles')
+      console.warn('⚠️ Google GenAI not available')
       return {
         styles: [
-          { name: 'Modern Minimal', description: 'Clean and contemporary', prompt: 'modern minimal style' },
-          { name: 'Bold Typography', description: 'Strong visual impact', prompt: 'bold typography style' },
-          { name: 'Product Focus', description: 'Highlight key features', prompt: 'product focus style' },
+          { name: 'Modern Minimal', description: 'Clean contemporary', prompt: 'modern minimal style' },
+          { name: 'Bold Typography', description: 'Strong impact', prompt: 'bold typography style' },
           { name: 'Luxury Premium', description: 'High-end aesthetic', prompt: 'luxury premium style' },
-          { name: 'Vibrant Colors', description: 'Eye-catching palette', prompt: 'vibrant colors style' },
-          { name: 'Artistic Creative', description: 'Unique and creative', prompt: 'artistic creative style' }
+          { name: 'Vibrant Colors', description: 'Eye-catching', prompt: 'vibrant colors style' },
+          { name: 'Product Focus', description: 'Feature highlight', prompt: 'product focus style' },
+          { name: 'Artistic Creative', description: 'Unique approach', prompt: 'artistic creative style' }
         ]
       }
     }
 
     try {
-      console.log('🎨 Generating image styles with Gemini Flash...')
-      
       const imageBase64 = await this.fileToBase64(imageFile)
       
-      const prompt = `Analyze this product image and suggest 6 different creative styles for video generation. For each style, provide:
-      1. A catchy name (2-3 words)
-      2. A brief description (3-5 words)
-      3. A style prompt for video generation (5-8 words)
-      
-      Focus on different visual approaches like lighting, camera angles, color schemes, and mood. Make them creative and diverse.
-      
-      Return as JSON array with format:
-      [{"name": "Style Name", "description": "Brief description", "prompt": "video style prompt"}]`
+      const prompt = `Analyze this product and suggest 6 creative video styles. Return as JSON:
+[{"name": "Style Name", "description": "Brief description", "prompt": "video style prompt"}]
+
+Focus on different visual approaches: lighting, angles, colors, mood. Make them diverse and creative.`
 
       const result = await this.googleGenAI.models.generateContent({
         model: "gemini-2.0-flash-exp",
@@ -687,97 +754,25 @@ class AIService {
       })
 
       const responseText = result.candidates[0].content.parts[0].text
-      console.log('🎨 Gemini Flash response:', responseText)
       
-      // Try to parse JSON response - handle markdown code blocks
-      try {
-        // Remove markdown code blocks if present
-        let cleanResponse = responseText.trim()
-        if (cleanResponse.startsWith('```json')) {
-          cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-        } else if (cleanResponse.startsWith('```')) {
-          cleanResponse = cleanResponse.replace(/^```\s*/, '').replace(/\s*```$/, '')
-        }
-        
-        console.log('🎨 Cleaned response:', cleanResponse)
-        const styles = JSON.parse(cleanResponse)
-        console.log('🎨 Parsed styles:', styles)
-        return { styles }
-      } catch (parseError) {
-        console.warn('❌ Failed to parse Gemini response:', parseError)
-        console.warn('❌ Raw response was:', responseText)
-        
-        // Try to extract JSON from the response manually
-        try {
-          const jsonMatch = responseText.match(/\[[\s\S]*\]/)
-          if (jsonMatch) {
-            const extractedJson = jsonMatch[0]
-            console.log('🎨 Extracted JSON:', extractedJson)
-            const styles = JSON.parse(extractedJson)
-            console.log('🎨 Successfully parsed extracted JSON:', styles)
-            return { styles }
-          }
-        } catch (extractError) {
-          console.warn('❌ Failed to extract JSON:', extractError)
-        }
-        
-        // Fallback to default styles
-        console.log('🎨 Using fallback styles')
-        return {
-          styles: [
-            { name: 'Modern Minimal', description: 'Clean and contemporary', prompt: 'modern minimal style' },
-            { name: 'Bold Typography', description: 'Strong visual impact', prompt: 'bold typography style' },
-            { name: 'Product Focus', description: 'Highlight key features', prompt: 'product focus style' },
-            { name: 'Luxury Premium', description: 'High-end aesthetic', prompt: 'luxury premium style' },
-            { name: 'Vibrant Colors', description: 'Eye-catching palette', prompt: 'vibrant colors style' },
-            { name: 'Artistic Creative', description: 'Unique and creative', prompt: 'artistic creative style' }
-          ]
-        }
+      // Parse JSON response
+      let cleanResponse = responseText.trim()
+      if (cleanResponse.startsWith('```json')) {
+        cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+      } else if (cleanResponse.startsWith('```')) {
+        cleanResponse = cleanResponse.replace(/^```\s*/, '').replace(/\s*```$/, '')
       }
+      
+      const styles = JSON.parse(cleanResponse)
+      return { styles }
     } catch (error) {
-      console.error('❌ Error generating image styles:', error)
-      console.error('❌ Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
-      })
-      
-      // Return fallback styles
-      const fallbackStyles = [
-        { name: 'Modern Minimal', description: 'Clean and contemporary', prompt: 'modern minimal style' },
-        { name: 'Bold Typography', description: 'Strong visual impact', prompt: 'bold typography style' },
-        { name: 'Product Focus', description: 'Highlight key features', prompt: 'product focus style' },
-        { name: 'Luxury Premium', description: 'High-end aesthetic', prompt: 'luxury premium style' },
-        { name: 'Vibrant Colors', description: 'Eye-catching palette', prompt: 'vibrant colors style' },
-        { name: 'Artistic Creative', description: 'Unique and creative', prompt: 'artistic creative style' }
-      ]
-      
-      console.log('🎨 Returning fallback styles:', fallbackStyles)
-      return { styles: fallbackStyles }
-    }
-  }
-
-  // Mock method for testing without API calls
-  async generateAdMock(request: AdGenerationRequest): Promise<AdGenerationResponse> {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    const videoUrl = request.includeVideoEffects ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' : undefined
-    console.log('🎬 Mock service returning video URL:', videoUrl)
-    
-    return {
-      id: `gen_${Date.now()}`,
-      status: 'completed',
-      generatedContent: {
-        imageAnalysis: {
-          productType: 'Fashion Item',
-          colors: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'],
-          style: 'Modern and trendy',
-          mood: 'Energetic and vibrant',
-          keyFeatures: ['High quality material', 'Contemporary design', 'Versatile styling', 'Comfortable fit'],
-          description: 'This is a mock analysis. Add your OpenAI API key to see real analysis.'
-        },
-        videoUrl: videoUrl,
-        videoPrompt: request.includeVideoEffects ? 'Mock video prompt for testing - Add Google API key for real video generation' : undefined
+      console.error('❌ Style generation error:', error)
+      return {
+        styles: [
+          { name: 'Modern Minimal', description: 'Clean contemporary', prompt: 'modern minimal style' },
+          { name: 'Bold Typography', description: 'Strong impact', prompt: 'bold typography style' },
+          { name: 'Luxury Premium', description: 'High-end aesthetic', prompt: 'luxury premium style' }
+        ]
       }
     }
   }

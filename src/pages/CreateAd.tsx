@@ -15,7 +15,7 @@ import { supabase } from "@/lib/supabase";
 const CreateAd = () => {
   const [step, setStep] = useState(1);
   const [format, setFormat] = useState("square");
-  const [tone, setTone] = useState("professional");
+  // Tone and template removed from simplified flow
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -23,8 +23,10 @@ const CreateAd = () => {
   const [generationResult, setGenerationResult] = useState<AdGenerationResponse | null>(null);
   const [includeVideoEffects, setIncludeVideoEffects] = useState(false);
   const [imageStyles, setImageStyles] = useState<Array<{name: string, description: string, prompt: string}>>([]);
+  const [imageVariations, setImageVariations] = useState<Array<{url: string, style: string, description: string}>>([]);
   const [selectedStyle, setSelectedStyle] = useState<string>("");
   const [isLoadingStyles, setIsLoadingStyles] = useState(false);
+  const [isLoadingVariations, setIsLoadingVariations] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -35,12 +37,7 @@ const CreateAd = () => {
     { id: "landscape", name: "Landscape (16:9)", icon: Monitor, desc: "YouTube & Facebook Ads" },
   ];
 
-  const tones = [
-    { id: "professional", name: "Professional", desc: "Formal and trustworthy" },
-    { id: "casual", name: "Casual", desc: "Friendly and approachable" },
-    { id: "luxury", name: "Luxury", desc: "Premium and exclusive" },
-    { id: "playful", name: "Playful", desc: "Fun and energetic" },
-  ];
+  // Removed tone options
 
   const templates = [
     { id: 1, name: "Modern Minimal", category: "E-commerce" },
@@ -72,24 +69,37 @@ const CreateAd = () => {
       };
       reader.readAsDataURL(file);
       
-      // Generate image styles
-      console.log('🎨 Starting style generation for file:', file.name);
-      setIsLoadingStyles(true);
+      // Immediately generate 3 image variations for selection
+      setIsLoadingVariations(true);
       try {
-        const stylesResult = await aiService.generateImageStyles(file);
-        console.log('🎨 Received styles result:', stylesResult);
-        setImageStyles(stylesResult.styles);
-        console.log('🎨 Set image styles:', stylesResult.styles);
-      } catch (error) {
-        console.error('❌ Error generating styles:', error);
+        console.log('🎨 Starting variation generation for:', file.name);
+        const analysisMinimal = { productType: 'Product', style: 'Modern', mood: 'Professional' } as any;
+        const variations = await aiService.generateImageVariations(file, analysisMinimal, undefined, user?.id);
+        console.log('🎨 Generated variations:', variations);
+        console.log('🎨 Variation URLs:', variations.map(v => v.url));
+        setImageVariations(variations);
+        // Prefill styles list from variations for simpler UI
+        setImageStyles(variations.map(v => ({ name: v.style, description: v.description, prompt: v.style })));
+        console.log('🎨 Set image variations and styles');
+      } catch (e) {
+        console.error('❌ Error generating variations:', e);
         toast({
-          title: "Error",
-          description: "Failed to generate image styles",
+          title: "Generation Error",
+          description: "Failed to generate image variations. Using original image.",
           variant: "destructive",
         });
+        // Fallback: use original image as variations
+        const originalUrl = URL.createObjectURL(file);
+        const fallbackVariations = [
+          { url: originalUrl, style: 'Original Style', description: 'Your original product image' },
+          { url: originalUrl, style: 'Modern Minimal', description: 'Modern minimal variation' },
+          { url: originalUrl, style: 'Bold Dynamic', description: 'Bold dynamic variation' }
+        ];
+        setImageVariations(fallbackVariations);
+        setImageStyles(fallbackVariations.map(v => ({ name: v.style, description: v.description, prompt: v.style })));
       } finally {
-        setIsLoadingStyles(false);
-        console.log('🎨 Style generation completed');
+        setIsLoadingVariations(false);
+        setStep(2);
       }
     }
   };
@@ -110,32 +120,28 @@ const CreateAd = () => {
       return;
     }
 
-    if (!selectedStyle) {
-      console.log('❌ No style selected');
-      toast({
-        title: "No style selected",
-        description: "Please select a video style before generating.",
-        variant: "destructive",
-      });
-      return;
-    }
+    // For simplified flow, selection optional; we can still generate video
 
     console.log('🎬 Starting generation...');
     setIsGenerating(true);
     setGenerationResult(null);
 
     try {
-      const request: AdGenerationRequest = {
-        image: uploadedImage,
-        format: format as 'square' | 'story' | 'landscape',
-        tone: tone as 'professional' | 'casual' | 'luxury' | 'playful',
-        template: selectedStyle, // Use selectedStyle as template
-        includeVideoEffects: includeVideoEffects,
-        selectedStyle: selectedStyle,
-      };
+      // Simple: just generate a video now using selected style (if any)
+      const video = includeVideoEffects
+        ? await aiService.generateVideoSimple(uploadedImage, selectedStyle)
+        : { videoUrl: undefined, videoPrompt: '' };
 
-      // Use real AI service with OpenAI GPT-4o-mini
-      const result = await aiService.generateAd(request);
+      const result: AdGenerationResponse = {
+        id: `gen_${Date.now()}`,
+        status: 'completed',
+        generatedContent: {
+          generatedImages: imageVariations,
+          videoUrl: video.videoUrl,
+          videoPrompt: video.videoPrompt,
+          imageAnalysis: { productType: 'Product', style: 'Modern', mood: 'Professional', colors: [], keyFeatures: [] }
+        }
+      };
       // Hard fallback: ensure a playable sample video when effects are enabled
       if (!result.generatedContent?.videoUrl && includeVideoEffects) {
         result.generatedContent = {
@@ -183,7 +189,7 @@ const CreateAd = () => {
           title: "Generation complete!",
           description: "Your ad has been generated successfully.",
         });
-        setStep(4); // Move to results step
+        setStep(4);
       } else {
         toast({
           title: "Generation failed",
@@ -216,8 +222,8 @@ const CreateAd = () => {
         <div className="flex items-center justify-between mb-12">
           {[
             { num: 1, label: "Upload" },
-            { num: 2, label: "Configure" },
-            { num: 3, label: "Generate" },
+            { num: 2, label: "Choose Variation" },
+            { num: 3, label: "Generate Video" },
           ].map((s, index) => (
             <div key={s.num} className="flex items-center flex-1">
               <div className="flex flex-col items-center flex-1">
@@ -308,106 +314,81 @@ const CreateAd = () => {
           </motion.div>
         )}
 
-        {/* Step 2: Configure */}
+        {/* Step 2: Choose Variation */}
         {step === 2 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-            {/* Format Selection */}
-            <Card className="glass">
-              <CardContent className="p-6">
-                <h3 className="text-xl font-semibold mb-4 text-foreground">Select Ad Format</h3>
-                <RadioGroup value={format} onValueChange={setFormat}>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {formats.map((f) => (
-                      <div key={f.id} className="relative">
-                        <RadioGroupItem value={f.id} id={f.id} className="peer sr-only" />
-                        <Label
-                          htmlFor={f.id}
-                          className="flex flex-col items-center glass rounded-xl p-6 cursor-pointer hover-lift peer-data-[state=checked]:ring-2 peer-data-[state=checked]:ring-primary"
-                        >
-                          <f.icon className="w-12 h-12 text-primary mb-3" />
-                          <span className="font-semibold mb-1 text-foreground">{f.name}</span>
-                          <span className="text-xs text-muted-foreground text-center">{f.desc}</span>
-                        </Label>
-                      </div>
-                    ))}
-                  </div>
-                </RadioGroup>
-              </CardContent>
-            </Card>
-
-            {/* Tone Selection */}
-            <Card className="glass">
-              <CardContent className="p-6">
-                <h3 className="text-xl font-semibold mb-4 text-foreground">Choose Tone</h3>
-                <RadioGroup value={tone} onValueChange={setTone}>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {tones.map((t) => (
-                      <div key={t.id} className="relative">
-                        <RadioGroupItem value={t.id} id={t.id} className="peer sr-only" />
-                        <Label
-                          htmlFor={t.id}
-                          className="flex items-center glass rounded-lg p-4 cursor-pointer hover-lift peer-data-[state=checked]:ring-2 peer-data-[state=checked]:ring-primary"
-                        >
-                          <div className="flex-1">
-                            <span className="font-semibold block mb-1 text-foreground">{t.name}</span>
-                            <span className="text-sm text-muted-foreground">{t.desc}</span>
-                          </div>
-                        </Label>
-                      </div>
-                    ))}
-                  </div>
-                </RadioGroup>
-              </CardContent>
-            </Card>
-
-            {/* AI-Generated Style Selection */}
+            {/* Variation Selection */}
             <Card className="glass">
               <CardContent className="p-6">
                 <h3 className="text-xl font-semibold mb-4 text-foreground">
-                  Choose Video Style
+                  Choose an Image Variation
                 </h3>
-                {isLoadingStyles ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-                    <p className="text-muted-foreground">Generating creative styles...</p>
-                  </div>
-                ) : imageStyles.length > 0 ? (
-                  <div>
-                    <div className="mb-4 p-2 bg-green-100 dark:bg-green-900/20 rounded text-xs">
-                      Debug: Found {imageStyles.length} styles
-                    </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {imageStyles.map((style, index) => (
-                        <div
-                          key={index}
-                          className={`glass rounded-xl p-4 hover-lift cursor-pointer group ${
-                            selectedStyle === style.prompt ? 'ring-2 ring-primary' : ''
-                          }`}
-                          onClick={() => {
-                            console.log('🎨 Selected style:', style);
-                            setSelectedStyle(style.prompt);
-                          }}
-                    >
-                      <div className="aspect-square bg-gradient-to-br from-purple-500/20 to-fuchsia-500/20 rounded-lg mb-3 flex items-center justify-center">
-                        <Sparkles className="w-8 h-8 text-primary group-hover:scale-110 transition-transform" />
+                {isLoadingVariations ? (
+                  <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-6"></div>
+                    <h4 className="text-lg font-semibold mb-2 text-foreground">AI is creating your image variations...</h4>
+                    <p className="text-muted-foreground mb-4">This may take 15-45 seconds</p>
+                    <div className="max-w-md mx-auto space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-foreground">Step 1: Analyzing your image with OpenAI...</span>
+                        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                       </div>
-                      <h4 className="font-semibold text-sm mb-1 text-foreground">
-                            {style.name}
-                      </h4>
-                          <p className="text-xs text-muted-foreground">
-                            {style.description}
-                          </p>
-                        </div>
-                      ))}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-foreground">Step 2: Generating creative prompts...</span>
+                        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                      </div>
+                      <div className="flex items-center justify-between text-sm text-muted-foreground">
+                        <span>Step 3: Creating variations with Google AI...</span>
+                        <span className="text-primary">⏳</span>
+                      </div>
                     </div>
+                  </div>
+                ) : imageVariations.length > 0 ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {imageVariations.map((variation, index) => {
+                      console.log('Rendering variation:', index, variation);
+                      return (
+                      <div
+                        key={index}
+                        className={`glass rounded-xl p-4 hover-lift cursor-pointer group ${
+                          selectedStyle === variation.style ? 'ring-2 ring-primary' : ''
+                        }`}
+                        onClick={() => setSelectedStyle(variation.style)}
+                      >
+                        <div className="aspect-square rounded-lg mb-3 overflow-hidden bg-muted/20 flex items-center justify-center">
+                          {variation.url ? (
+                            <img 
+                              src={variation.url} 
+                              alt={variation.style} 
+                              className="w-full h-full object-cover" 
+                              onError={(e) => {
+                                console.error('Image load error for', variation.style, ':', e);
+                                console.error('Image URL:', variation.url);
+                              }}
+                              onLoad={() => {
+                                console.log('Image loaded successfully for', variation.style);
+                              }}
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-muted/50">
+                              <span className="text-muted-foreground text-sm">No image</span>
+                            </div>
+                          )}
+                        </div>
+                        <h4 className="font-semibold text-sm mb-1 text-foreground">
+                          {variation.style}
+                        </h4>
+                        <p className="text-xs text-muted-foreground">
+                          {variation.description}
+                        </p>
+                      </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center py-8">
                     <Sparkles className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-muted-foreground">Upload an image to see AI-generated styles</p>
-                    <div className="mt-4 p-2 bg-yellow-100 dark:bg-yellow-900/20 rounded text-xs">
-                      Debug: No styles loaded yet. imageStyles.length = {imageStyles.length}
-                    </div>
+                    <p className="text-muted-foreground">Upload an image to see variations</p>
                   </div>
                 )}
               </CardContent>
@@ -434,28 +415,17 @@ const CreateAd = () => {
               </CardContent>
             </Card>
 
-            {/* Debug Info */}
-            <div className="mb-4 p-3 bg-blue-100 dark:bg-blue-900/20 rounded text-xs">
-              <strong>Debug Info:</strong><br/>
-              selectedStyle: {selectedStyle || 'none'}<br/>
-              imageStyles.length: {imageStyles.length}<br/>
-              Button disabled: {!selectedStyle ? 'YES' : 'NO'}
-            </div>
-
             <div className="flex justify-between">
               <Button onClick={() => setStep(1)} variant="outline">
                 Back
               </Button>
               <Button 
-                onClick={() => {
-                  console.log('🎬 Button clicked, selectedStyle:', selectedStyle);
-                  setStep(3);
-                }} 
+                onClick={() => setStep(3)} 
                 size="lg" 
                 className="glow"
-                disabled={!selectedStyle}
+                disabled={isLoadingVariations || imageVariations.length === 0}
               >
-                Continue to Generate
+                Continue to Video
               </Button>
             </div>
           </motion.div>
@@ -506,20 +476,7 @@ const CreateAd = () => {
                     <p className="text-muted-foreground mb-8">
                       Review your settings and click generate to create your ad
                     </p>
-                    <div className="max-w-md mx-auto space-y-3 text-left">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-foreground">Format:</span>
-                        <span className="text-primary">{format}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-foreground">Tone:</span>
-                        <span className="text-primary">{tone}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-foreground">Style:</span>
-                        <span className="text-primary">{selectedStyle}</span>
-                      </div>
-                    </div>
+                    <div className="max-w-md mx-auto text-sm text-muted-foreground">Click Generate to create a video from the chosen variation.</div>
                   </>
                 )}
               </CardContent>
@@ -533,7 +490,7 @@ const CreateAd = () => {
                 <Button variant="outline" disabled>Generating...</Button>
               ) : (
                 <Button onClick={handleGenerate} size="lg" className="glow">
-                  Generate Ad
+                  Generate Video
                 </Button>
               )}
             </div>

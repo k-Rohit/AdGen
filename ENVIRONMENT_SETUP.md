@@ -101,10 +101,16 @@ If you want to use real AI instead of the mock service:
 2. Add it to your `.env.local` file as `VITE_OPENAI_API_KEY=your_key_here`
 3. The app will automatically use GPT-4o-mini for image analysis and ad copy generation
 
-#### Google AI (Video Generation with Veo 3.1)
+#### Google AI (Image Variations & Video Generation)
 1. Get a Google AI API key from [Google AI Studio](https://aistudio.google.com/)
 2. Add it to your `.env.local` file as `VITE_GOOGLE_API_KEY=your_key_here`
-3. The app will use Google's Veo 3.1 to generate dynamic videos from your uploaded images
+3. The app will use Google's Gemini 2.5 Flash Image model to generate image variations
+4. The app will also use Google's Veo 3.1 to generate dynamic videos from your uploaded images
+
+**Note**: The Google API key enables:
+- ✅ **Real AI image variations** based on your uploaded product image
+- ✅ **Video generation** with dynamic effects
+- ✅ **Intelligent style analysis** of your products
 
 **Note**: The mock service provides excellent results for testing and development. You only need real AI APIs if you want to generate content based on actual image analysis and create video effects.
 

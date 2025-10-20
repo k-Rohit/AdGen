@@ -1,4 +1,4 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -15,8 +15,9 @@ import {
   CreditCard
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/lib/supabase";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -24,6 +25,9 @@ interface DashboardLayoutProps {
 
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [creditsUsed, setCreditsUsed] = useState(0);
+  const [creditsTotal] = useState(50);
+  const [loadingCredits, setLoadingCredits] = useState(true);
   const location = useLocation();
   const { user, signOut } = useAuth();
   const { toast } = useToast();
@@ -37,6 +41,36 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   ];
 
   const isActive = (path: string) => location.pathname === path;
+
+  // Fetch credits data
+  const fetchCredits = async () => {
+    if (!user) return;
+
+    try {
+      setLoadingCredits(true);
+      
+      // Get current month's start date
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      // Count generations this month (1 credit per generation)
+      const { count } = await supabase
+        .from('image_variations')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('created_at', startOfMonth.toISOString());
+
+      setCreditsUsed(count || 0);
+    } catch (error) {
+      console.error('Error fetching credits:', error);
+    } finally {
+      setLoadingCredits(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCredits();
+  }, [user]);
 
   const handleSignOut = async () => {
     try {
@@ -62,9 +96,15 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     }
   };
 
-  const creditsUsed = 23;
-  const creditsTotal = 50;
   const creditsPercentage = (creditsUsed / creditsTotal) * 100;
+  
+  // Helper function to get days until month end
+  const getDaysUntilMonthEnd = () => {
+    const now = new Date();
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const diffInDays = Math.ceil((endOfMonth.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    return diffInDays;
+  };
 
   return (
     <div className="min-h-screen dark flex bg-background">
@@ -128,11 +168,25 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-foreground">Credits</span>
                 <span className="text-sm text-muted-foreground">
-                  {creditsUsed}/{creditsTotal}
+                  {loadingCredits ? (
+                    <div className="h-4 w-12 bg-muted animate-pulse rounded"></div>
+                  ) : (
+                    `${creditsUsed}/${creditsTotal}`
+                  )}
                 </span>
               </div>
-              <Progress value={creditsPercentage} className="mb-2" />
-              <p className="text-xs text-muted-foreground">Resets in 12 days</p>
+              {loadingCredits ? (
+                <div className="h-2 w-full bg-muted animate-pulse rounded mb-2"></div>
+              ) : (
+                <Progress value={creditsPercentage} className="mb-2" />
+              )}
+              <p className="text-xs text-muted-foreground">
+                {loadingCredits ? (
+                  <div className="h-3 w-20 bg-muted animate-pulse rounded"></div>
+                ) : (
+                  `Resets in ${getDaysUntilMonthEnd()} days`
+                )}
+              </p>
             </div>
 
             <Link to="/pricing">
