@@ -36,6 +36,27 @@ interface AdGenerationResponse {
   error?: string
 }
 
+interface VideoGenerationRequest {
+  imageUrl?: string
+  prompt: string
+  userId: string
+}
+
+interface VideoPrompt {
+  id: string
+  prompt: string
+  description: string
+  type: 'image-to-video' | 'text-to-video'
+}
+
+interface VideoGenerationResponse {
+  id: string
+  videoUrl: string
+  prompt: string
+  status: 'completed' | 'failed'
+  error?: string
+}
+
 class AIService {
   private openaiApiKey: string
   private googleApiKey: string
@@ -50,8 +71,6 @@ class AIService {
     console.log('🔑 Environment check:')
     console.log('  - OpenAI API Key:', this.openaiApiKey ? '✅ Available' : '❌ Missing')
     console.log('  - Google API Key:', this.googleApiKey ? '✅ Available' : '❌ Missing')
-    console.log('  - Google API Key length:', this.googleApiKey.length)
-    console.log('  - Google API Key starts with:', this.googleApiKey.substring(0, 10) + '...')
     
     if (this.googleApiKey) {
       console.log('🔑 Initializing Google GenAI')
@@ -60,8 +79,6 @@ class AIService {
           apiKey: this.googleApiKey
         })
         console.log('✅ Google GenAI initialized successfully')
-        console.log('✅ Google GenAI object:', !!this.googleGenAI)
-        
       } catch (error) {
         console.error('❌ Failed to initialize Google GenAI:', error)
         this.googleGenAI = null
@@ -72,37 +89,34 @@ class AIService {
     }
   }
 
-
-  // Simple wrapper: analyze image then generate video using Veo
   async generateVideoSimple(
     imageFile: File,
     selectedStyle?: string
-  ): Promise<{ videoUrl?: string; videoPrompt: string }> {
-    // Ensure Google GenAI is available (will throw inside generateVideoWithVeo otherwise)
+  ): Promise<{ videoUrl?: string; videoPrompt: string; imageAnalysis: any }> {
     const imageBase64 = await this.fileToBase64(imageFile)
     const imageAnalysis = await this.analyzeImageWithGPT4oMini(imageBase64)
-    return this.generateVideoWithVeo(imageFile, imageAnalysis, selectedStyle)
+    const videoResult = await this.generateVideoWithVeo(imageFile, imageAnalysis, selectedStyle)
+    return {
+      ...videoResult,
+      imageAnalysis
+    }
   }
 
   async generateAd(request: AdGenerationRequest): Promise<AdGenerationResponse> {
     try {
       console.log('🚀 Starting AI generation process...')
       
-      // Convert image to base64
       const imageBase64 = await this.fileToBase64(request.image)
       
-      // Step 1: Analyze image with GPT-4o-mini
       console.log('🔍 Analyzing image...')
       const imageAnalysis = await this.analyzeImageWithGPT4oMini(imageBase64)
       
-      // Step 2: Generate style variations with Gemini Flash 2.5 (optional)
       let generatedImages: Array<{url: string, style: string, description: string}> | undefined = undefined
       if (!request.skipVariations) {
         console.log('🎨 Generating image variations...')
         generatedImages = await this.generateImageVariations(request.image, imageAnalysis, request.selectedStyle)
       }
       
-      // Step 3: Generate video with Google Veo 3.1
       let videoUrl = undefined
       let videoPrompt = undefined
       
@@ -146,17 +160,9 @@ class AIService {
     })
   }
 
-  private async analyzeImageWithGPT4oMini(imageBase64: string): Promise<any> {
+  async analyzeImageWithGPT4oMini(imageBase64: string): Promise<any> {
     if (!this.openaiApiKey) {
-      console.warn('⚠️ No OpenAI API key, using mock analysis')
-      return {
-        productType: 'Product',
-        colors: ['#FF6B6B', '#4ECDC4', '#45B7D1'],
-        style: 'Modern',
-        mood: 'Professional',
-        keyFeatures: ['High quality', 'Contemporary design'],
-        description: 'Mock analysis - Add OpenAI API key for real analysis'
-      }
+      throw new Error('OpenAI API key is required for image analysis. Please add VITE_OPENAI_API_KEY to your environment variables.')
     }
 
     try {
@@ -171,14 +177,14 @@ class AIService {
           messages: [
             {
               role: 'system',
-              content: 'You are an expert product analyst. Analyze images and provide detailed product insights.'
+              content: 'You are a product identification expert. Look at the image and identify the exact product name and type.'
             },
             {
               role: 'user',
               content: [
                 {
                   type: 'text',
-                  text: 'Analyze this product image. Describe the product type, main colors, style, mood, and key features. Be specific and detailed.'
+                  text: 'Analyze this product image carefully. Identify what type of product this is (food, drink, tech, fashion, etc.), describe the main colors you see, the style/aesthetic, the mood/feeling it conveys, and the key features or characteristics. Be very specific - if it\'s food, mention what kind of food. If it\'s a burger, say it\'s a burger. Be detailed and accurate.'
                 },
                 {
                   type: 'image_url',
@@ -200,22 +206,22 @@ class AIService {
       }
 
       const data = await response.json()
-      const analysisText = data.choices[0]?.message?.content || ''
+      const productName = data.choices[0]?.message?.content?.trim() || 'Product'
+      
+      console.log('🔍 Raw AI response:', data.choices[0]?.message?.content)
+      console.log('🔍 Identified product:', productName)
+      console.log('🔍 Product name length:', productName.length)
       
       return {
-        productType: 'Product',
-        colors: ['#FF6B6B', '#4ECDC4', '#45B7D1'],
-        style: 'Modern',
-        mood: 'Professional',
-        keyFeatures: ['High quality', 'Contemporary design'],
-        description: analysisText,
-        rawAnalysis: analysisText
+        productName: productName,
+        productType: productName
       }
     } catch (error) {
       console.error('❌ Image analysis error:', error)
       throw error
     }
   }
+
 
   private async generateVariationPromptsWithOpenAI(
     imageFile: File, 
@@ -291,7 +297,6 @@ class AIService {
       const data = await response.json()
       const responseText = data.choices[0]?.message?.content || ''
       
-      // Parse JSON response
       let cleanResponse = responseText.trim()
       if (cleanResponse.startsWith('```json')) {
         cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '')
@@ -301,7 +306,6 @@ class AIService {
       
       const prompts = JSON.parse(cleanResponse)
       
-      // Validate and ensure we have exactly 3 prompts
       if (Array.isArray(prompts) && prompts.length >= 3) {
         return prompts.slice(0, 3).map((p: any) => ({
           name: p.name || 'Generated Style',
@@ -324,11 +328,7 @@ class AIService {
     userId?: string
   ): Promise<Array<{url: string, style: string, description: string}>> {
     console.log('🎨 Starting image variation generation...')
-    console.log('🔑 Google API Key available:', !!this.googleApiKey)
-    console.log('🔑 OpenAI API Key available:', !!this.openaiApiKey)
-    console.log('🤖 Google GenAI initialized:', !!this.googleGenAI)
     
-    // First, try to generate creative prompts using OpenAI
     let variationPrompts: Array<{name: string, prompt: string, description: string}> = []
     
     if (this.openaiApiKey) {
@@ -341,54 +341,26 @@ class AIService {
       }
     }
     
-    // Fallback to default prompts if OpenAI fails
     if (variationPrompts.length === 0) {
-      console.log('🎨 Using default variation prompts')
-      variationPrompts = [
-        {
-          name: 'Modern Minimal',
-          prompt: 'Transform this product into a modern minimal style with clean lines, soft colors, and contemporary design. Keep the product recognizable but apply minimalist aesthetics.',
-          description: 'Clean and contemporary design'
-        },
-        {
-          name: 'Bold Dynamic',
-          prompt: 'Transform this product into a bold dynamic style with vibrant colors, strong contrast, and energetic composition. Keep the product recognizable but apply dynamic visual impact.',
-          description: 'Strong visual impact'
-        },
-        {
-          name: 'Luxury Premium',
-          prompt: 'Transform this product into a luxury premium style with elegant lighting, rich tones, and sophisticated composition. Keep the product recognizable but apply high-end aesthetics.',
-          description: 'High-end aesthetic'
-        }
-      ]
+      throw new Error('Failed to generate image variation prompts. Please try again.')
     }
     
-    // Don't include the original image - only show AI-generated variations
     const originalUrl = URL.createObjectURL(imageFile)
     const generatedImages: Array<{url: string, style: string, description: string}> = []
     
-    // Only proceed if Google API is available
     if (!this.googleGenAI || !this.googleApiKey) {
-      console.error('❌ Google GenAI not available - cannot generate images')
-      console.error('❌ Google API Key available:', !!this.googleApiKey)
-      console.error('❌ Google GenAI initialized:', !!this.googleGenAI)
       throw new Error('Google API is required for image generation. Please add VITE_GOOGLE_API_KEY to your environment variables.')
     }
     
     console.log('✅ Google API is available, proceeding with real image generation')
-    console.log('🔑 Google API Key available:', !!this.googleApiKey)
-    console.log('🤖 Google GenAI initialized:', !!this.googleGenAI)
 
     try {
       console.log('🎨 Generating image variations with Google Gemini...')
       
-      // Generate images using the prompts from OpenAI (or default prompts)
       for (const promptData of variationPrompts) {
         try {
           console.log(`🎨 Generating ${promptData.name} variation...`)
-          console.log(`🎨 Using prompt: ${promptData.prompt}`)
           
-          // Use the exact structure from your working example
           const config = {
             responseModalities: ['IMAGE', 'TEXT'],
           };
@@ -404,80 +376,48 @@ class AIService {
             },
           ];
 
-          console.log('🎨 Calling Google Gemini API with config:', config)
-          console.log('🎨 Contents:', JSON.stringify(contents, null, 2))
-          
           const response = await this.googleGenAI.models.generateContentStream({
             model: 'gemini-2.5-flash-image',
             config,
             contents,
           });
-          
-          console.log('🎨 Got response from Google Gemini')
 
           let imageGenerated = false;
           let fileIndex = 0;
           for await (const chunk of response) {
-            console.log('🎨 Processing chunk:', JSON.stringify(chunk, null, 2));
-            
-            if (!chunk.candidates || !chunk.candidates[0].content || !chunk.candidates[0].content.parts) {
-              console.log('🎨 Skipping chunk - no candidates/content/parts');
-              continue;
-            }
-            
             if (chunk.candidates?.[0]?.content?.parts?.[0]?.inlineData) {
-              console.log('🎨 Found inline data in chunk!');
               const fileName = `variation_${promptData.name}_${Date.now()}_${fileIndex++}.png`;
               const inlineData = chunk.candidates[0].content.parts[0].inlineData;
               
-              console.log('🎨 Inline data details:', {
-                mimeType: inlineData.mimeType,
-                dataLength: inlineData.data?.length,
-                hasData: !!inlineData.data
-              });
+              if (!inlineData.data) continue;
               
-              if (!inlineData.data) {
-                console.warn('⚠️ No data in inlineData');
-                continue;
-              }
-              
-              // Convert base64 to Uint8Array (browser compatible)
               const binaryString = atob(inlineData.data);
               const bytes = new Uint8Array(binaryString.length);
               for (let i = 0; i < binaryString.length; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
               }
-              console.log('🎨 Bytes created, size:', bytes.length);
               
-              // Create blob
               const imageBlob = new Blob([bytes], { type: inlineData.mimeType || 'image/png' });
-              console.log('🎨 Blob created, size:', imageBlob.size, 'type:', imageBlob.type);
               
               let imageUrl: string;
               
-              // Try to save to Supabase if userId is provided
               if (userId) {
                 try {
-                  console.log('💾 Attempting to save to Supabase...');
                   imageUrl = await this.saveImageToSupabase(imageBlob, fileName, userId);
-                  console.log('✅ Saved to Supabase:', imageUrl);
                 } catch (error) {
                   console.warn('⚠️ Failed to save to Supabase, using blob URL:', error);
                   imageUrl = URL.createObjectURL(imageBlob);
                 }
               } else {
                 imageUrl = URL.createObjectURL(imageBlob);
-                console.log('🎨 Created blob URL:', imageUrl);
               }
             
-            generatedImages.push({
-              url: imageUrl,
+              generatedImages.push({
+                url: imageUrl,
                 style: promptData.name,
                 description: promptData.description
               });
-              console.log(`✅ Generated ${promptData.name} variation with URL: ${imageUrl}`);
               
-              // Save metadata to database if userId is provided
               if (userId) {
                 await this.saveImageVariationToDatabase(
                   userId,
@@ -490,14 +430,11 @@ class AIService {
               }
               
               imageGenerated = true;
-              break; // We got an image, move to next style
-            } else if (chunk.candidates?.[0]?.content?.parts?.[0]?.text) {
-              console.log('🎨 Got text response:', chunk.candidates[0].content.parts[0].text);
+              break;
             }
           }
           
           if (!imageGenerated) {
-            console.error(`❌ No image generated for ${promptData.name}`)
             throw new Error(`Failed to generate image for ${promptData.name}`)
           }
         } catch (styleError) {
@@ -506,7 +443,6 @@ class AIService {
         }
       }
 
-      console.log('🎨 Final generated images:', generatedImages)
       return generatedImages
       
     } catch (error) {
@@ -515,15 +451,12 @@ class AIService {
     }
   }
 
-
   private async saveImageToSupabase(
     imageBlob: Blob, 
     fileName: string, 
     userId: string
   ): Promise<string> {
     try {
-      console.log('💾 Saving image to Supabase storage:', fileName)
-      
       const { data, error } = await supabase.storage
         .from('generated-images')
         .upload(`${userId}/${fileName}`, imageBlob, {
@@ -531,17 +464,12 @@ class AIService {
           upsert: false
         })
       
-      if (error) {
-        console.error('❌ Error uploading to Supabase:', error)
-        throw error
-      }
+      if (error) throw error
       
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('generated-images')
         .getPublicUrl(`${userId}/${fileName}`)
       
-      console.log('✅ Image saved to Supabase:', urlData.publicUrl)
       return urlData.publicUrl
     } catch (error) {
       console.error('❌ Failed to save image to Supabase:', error)
@@ -558,23 +486,6 @@ class AIService {
     originalImageUrl?: string
   ): Promise<void> {
     try {
-      console.log('💾 Saving image variation metadata to database')
-      console.log('💾 User ID:', userId)
-      console.log('💾 Variation name:', variationName)
-      console.log('💾 Generated URL:', generatedImageUrl)
-      
-      // First, test if the table exists
-      const { data: testData, error: testError } = await supabase
-        .from('image_variations')
-        .select('id')
-        .limit(1)
-      
-      if (testError) {
-        console.error('❌ Table does not exist or access denied:', testError)
-        console.error('❌ Please run the supabase-setup.sql script first')
-        return
-      }
-      
       const { error } = await supabase
         .from('image_variations')
         .insert({
@@ -586,15 +497,9 @@ class AIService {
           prompt_used: promptUsed
         })
       
-      if (error) {
-        console.error('❌ Error saving to database:', error)
-        throw error
-      }
-      
-      console.log('✅ Image variation metadata saved to database')
+      if (error) throw error
     } catch (error) {
       console.error('❌ Failed to save metadata to database:', error)
-      // Don't throw - this is not critical for the main flow
     }
   }
 
@@ -625,13 +530,12 @@ class AIService {
 
       console.log('🎬 Polling for video completion...')
       
-      // Poll until complete (max 2 minutes)
       const maxAttempts = 12
       let attempts = 0
       
       while (!operation.done && attempts < maxAttempts) {
         console.log(`⏳ Attempt ${attempts + 1}/${maxAttempts}...`)
-        await new Promise(resolve => setTimeout(resolve, 10000)) // 10 seconds
+        await new Promise(resolve => setTimeout(resolve, 10000))
         
         operation = await this.googleGenAI.operations.getVideosOperation({
           operation: operation,
@@ -646,17 +550,12 @@ class AIService {
 
       console.log('✅ Video generation completed!')
       
-      // Extract video URL
       if (operation.response?.generatedVideos?.[0]?.video?.uri) {
         const videoUri = operation.response.generatedVideos[0].video.uri
-        console.log('📹 Video URI:', videoUri)
-
-        // Download video and create blob URL
+        
         try {
-          // Add API key to URL for authentication (handle existing query string)
           const separator = videoUri.includes('?') ? '&' : '?'
           const videoUrl = `${videoUri}${separator}key=${this.googleApiKey}`
-          console.log('📹 Fetching video from:', videoUrl)
           
           const response = await fetch(videoUrl)
           
@@ -666,8 +565,6 @@ class AIService {
 
           const videoBlob = await response.blob()
           const blobUrl = URL.createObjectURL(videoBlob)
-          
-          console.log('✅ Video blob URL created:', blobUrl)
           
           return {
             videoUrl: blobUrl,
@@ -683,7 +580,6 @@ class AIService {
       
     } catch (error) {
       console.error('❌ Video generation error:', error)
-      // Return fallback video
       return {
         videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
         videoPrompt: 'Fallback video due to generation error'
@@ -717,17 +613,7 @@ class AIService {
     console.log('🎨 Generating image styles...')
     
     if (!this.googleGenAI) {
-      console.warn('⚠️ Google GenAI not available')
-      return {
-        styles: [
-          { name: 'Modern Minimal', description: 'Clean contemporary', prompt: 'modern minimal style' },
-          { name: 'Bold Typography', description: 'Strong impact', prompt: 'bold typography style' },
-          { name: 'Luxury Premium', description: 'High-end aesthetic', prompt: 'luxury premium style' },
-          { name: 'Vibrant Colors', description: 'Eye-catching', prompt: 'vibrant colors style' },
-          { name: 'Product Focus', description: 'Feature highlight', prompt: 'product focus style' },
-          { name: 'Artistic Creative', description: 'Unique approach', prompt: 'artistic creative style' }
-        ]
-      }
+      throw new Error('Google API is required for image style generation. Please add VITE_GOOGLE_API_KEY to your environment variables.')
     }
 
     try {
@@ -755,7 +641,6 @@ Focus on different visual approaches: lighting, angles, colors, mood. Make them 
 
       const responseText = result.candidates[0].content.parts[0].text
       
-      // Parse JSON response
       let cleanResponse = responseText.trim()
       if (cleanResponse.startsWith('```json')) {
         cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '')
@@ -767,16 +652,248 @@ Focus on different visual approaches: lighting, angles, colors, mood. Make them 
       return { styles }
     } catch (error) {
       console.error('❌ Style generation error:', error)
-      return {
-        styles: [
-          { name: 'Modern Minimal', description: 'Clean contemporary', prompt: 'modern minimal style' },
-          { name: 'Bold Typography', description: 'Strong impact', prompt: 'bold typography style' },
-          { name: 'Luxury Premium', description: 'High-end aesthetic', prompt: 'luxury premium style' }
-        ]
+      throw new Error('Failed to generate image styles. Please try again.')
+    }
+  }
+
+  async generateVideoPrompts(imageAnalysis: any, imageVariations: Array<{url: string, style: string, description: string}>): Promise<VideoPrompt[]> {
+    if (!this.openaiApiKey) {
+      throw new Error('OpenAI API key is required for video prompt generation.')
+    }
+
+    try {
+      console.log('🎬 Generating video prompts for:', imageAnalysis.productName)
+      
+      const prompt = `Create 4 storytelling video prompts for ${imageAnalysis.productName}.
+
+Create 4 different scenarios that people would experience with ${imageAnalysis.productName}. Make them emotional and relatable.
+
+Return as JSON:
+[
+  {
+    "id": "prompt_1",
+    "prompt": "Create a [emotion] 8-second story about [scenario with ${imageAnalysis.productName}]",
+    "description": "Brief description",
+    "type": "text-to-video"
+  },
+  {
+    "id": "prompt_2",
+    "prompt": "[Your full 200-300 word detailed prompt with DIFFERENT scenario]",
+    "description": "Brief 1-sentence summary: [different emotion] [different scenario]",
+    "type": "text-to-video"
+  },
+  {
+    "id": "prompt_3",
+    "prompt": "[Your full 200-300 word detailed prompt with THIRD unique scenario]",
+    "description": "Brief 1-sentence summary: [third emotion] [third scenario]",
+    "type": "image-to-video"
+  },
+  {
+    "id": "prompt_4",
+    "prompt": "[Your full 200-300 word detailed prompt with FOURTH unique scenario]",
+    "description": "Brief 1-sentence summary: [fourth emotion] [fourth scenario]",
+    "type": "text-to-video"
+  }
+]
+
+REMEMBER: These prompts are for ${imageAnalysis.productType} targeting ${imageAnalysis.targetAudience}. Make every scene, emotion, and visual DIRECTLY relevant to this specific product. Think like you're directing a premium commercial for this exact product.`
+
+      const response = await fetch(`${this.openaiBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.openaiApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.9,
+          max_tokens: 3000
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status}`)
       }
+
+      const data = await response.json()
+      const content = data.choices[0].message.content
+      
+      let cleanResponse = content.trim()
+      if (cleanResponse.startsWith('```json')) {
+        cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+      } else if (cleanResponse.startsWith('```')) {
+        cleanResponse = cleanResponse.replace(/^```\s*/, '').replace(/\s*```$/, '')
+      }
+      
+      const prompts = JSON.parse(cleanResponse)
+      console.log('🎬 Generated detailed video prompts:', prompts)
+      return prompts
+
+    } catch (error) {
+      console.error('❌ Video prompt generation error:', error)
+      throw new Error('Failed to generate video prompts. Please try again.')
+    }
+  }
+
+  async generateVideo(request: VideoGenerationRequest): Promise<VideoGenerationResponse> {
+    if (!this.googleGenAI || !this.googleApiKey) {
+      throw new Error('Google API is required for video generation')
+    }
+
+    try {
+      console.log('🎬 Generating video with Google Veo 3...')
+
+      const config = {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: '16:9',
+        duration: '15s'
+      }
+
+      const generateVideoPayload: any = {
+        model: 'veo-3.1-generate-preview',
+        config: config,
+        prompt: request.prompt
+      }
+
+      if (request.imageUrl) {
+        const base64Data = request.imageUrl.includes(',') ? request.imageUrl.split(',')[1] : request.imageUrl
+        
+        generateVideoPayload.config.referenceImages = [{
+          image: {
+            imageBytes: base64Data,
+            mimeType: 'image/jpeg'
+          },
+          referenceType: 'ASSET'
+        }]
+      }
+
+      let operation = await this.googleGenAI.models.generateVideos(generateVideoPayload)
+
+      while (!operation.done) {
+        await new Promise((resolve) => setTimeout(resolve, 10000))
+        operation = await this.googleGenAI.operations.getVideosOperation({operation: operation})
+      }
+
+      if (operation?.response) {
+        const videos = operation.response.generatedVideos
+
+        if (!videos || videos.length === 0) {
+          throw new Error('No videos were generated.')
+        }
+
+        const firstVideo = videos[0]
+        if (!firstVideo?.video?.uri) {
+          throw new Error('Generated video is missing a URI.')
+        }
+
+        const url = decodeURIComponent(firstVideo.video.uri)
+        const res = await fetch(`${url}&key=${this.googleApiKey}`)
+
+        if (!res.ok) {
+          throw new Error(`Failed to fetch video: ${res.status}`)
+        }
+
+        const videoBlob = await res.blob()
+        const fileName = `video_${Date.now()}.mp4`
+        const supabaseUrl = await this.saveVideoToSupabase(videoBlob, fileName, request.userId)
+        
+        await this.saveVideoToDatabase(
+          request.userId,
+          `Generated Video ${Date.now()}`,
+          request.prompt,
+          supabaseUrl,
+          request.imageUrl ? 'image-to-video' : 'text-to-video',
+          request.imageUrl
+        )
+        
+        return {
+          id: `video_${Date.now()}`,
+          videoUrl: supabaseUrl,
+          prompt: request.prompt,
+          status: 'completed'
+        }
+      } else {
+        throw new Error('No videos generated.')
+      }
+
+    } catch (error) {
+      console.error('❌ Video generation error:', error)
+      return {
+        id: `video_${Date.now()}`,
+        videoUrl: '',
+        prompt: request.prompt,
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  }
+
+  private async saveVideoToSupabase(videoBlob: Blob, fileName: string, userId: string): Promise<string> {
+    try {
+      const filePath = `${userId}/${fileName}`
+      
+      const { data, error } = await supabase.storage
+        .from('generated-videos')
+        .upload(filePath, videoBlob, {
+          contentType: 'video/mp4',
+          upsert: false
+        })
+
+      if (error) throw error
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('generated-videos')
+        .getPublicUrl(filePath)
+
+      return publicUrl
+
+    } catch (error) {
+      console.error('❌ Video save error:', error)
+      throw error
+    }
+  }
+
+  private async saveVideoToDatabase(
+    userId: string,
+    title: string,
+    prompt: string,
+    videoUrl: string,
+    generationType: 'image-to-video' | 'text-to-video',
+    sourceImageUrl?: string
+  ): Promise<void> {
+    try {
+      console.log('💾 Saving video to database:', { userId, title, videoUrl, generationType })
+      
+      const { error } = await supabase
+        .from('videos')
+        .insert({
+          user_id: userId,
+          title: title,
+          prompt: prompt,
+          video_url: videoUrl,
+          generation_type: generationType,
+          source_image_url: sourceImageUrl,
+          status: 'completed'
+        })
+        
+      if (error) {
+        console.error('❌ Database error:', error)
+        throw error
+      }
+      
+      console.log('✅ Video saved to database successfully')
+    } catch (error) {
+      console.error('❌ Failed to save video metadata:', error)
     }
   }
 }
 
 export const aiService = new AIService()
-export type { AdGenerationRequest, AdGenerationResponse }
+export type { AdGenerationRequest, AdGenerationResponse, VideoGenerationRequest, VideoPrompt, VideoGenerationResponse }

@@ -58,7 +58,7 @@ const Index = () => {
       name: "Free",
       price: billingPeriod === "monthly" ? "$0" : "$0",
       description: "Perfect for trying out our platform",
-      features: ["3 generations/month", "Watermarked exports", "Basic templates", "Standard support"],
+      features: ["10 generations/month", "Basic templates", "Standard support"],
       cta: "Start Free",
       popular: false,
     },
@@ -107,13 +107,13 @@ const Index = () => {
       <nav className="fixed top-0 w-full z-50 glass border-b border-border/50">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 gradient-primary rounded-lg flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
+              <img src="/webicon.png" alt="AdGen AI Logo" className="w-full h-full object-contain" />
             </div>
             <span className="text-xl font-bold text-foreground">AdGen AI</span>
           </div>
           
-          <div className="hidden md:flex items-center space-x-8">
+          <div className="hidden md:flex items-center space-x-8 ml-20">
             <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors">Features</a>
             <a href="#pricing" className="text-muted-foreground hover:text-foreground transition-colors">Pricing</a>
             <a href="#testimonials" className="text-muted-foreground hover:text-foreground transition-colors">Testimonials</a>
@@ -521,8 +521,8 @@ const Index = () => {
           
           <div className="pt-8 border-t border-border flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center space-x-2 mb-4 md:mb-0">
-              <div className="w-6 h-6 gradient-primary rounded-lg flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-white" />
+              <div className="w-6 h-6 rounded-lg flex items-center justify-center overflow-hidden">
+                <img src="/webicon.png" alt="AdGen AI Logo" className="w-full h-full object-contain" />
               </div>
               <span className="font-semibold text-foreground">AdGen AI</span>
             </div>

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Sparkles, Image, Zap, TrendingUp, Upload, Layout, Loader2 } from "lucide-react";
+import { Sparkles, Image, Zap, TrendingUp, Upload, Layout, Loader2, Video } from "lucide-react";
 import { Link } from "react-router-dom";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
@@ -19,6 +19,8 @@ interface DashboardStats {
     title: string;
     date: string;
     format: string;
+    type: 'image' | 'video';
+    url?: string;
   }>;
 }
 
@@ -73,20 +75,68 @@ const Dashboard = () => {
       const uniqueTemplates = new Set(templatesData?.map(item => item.template) || []);
       const templatesUsed = uniqueTemplates.size;
 
-      // Fetch recent generations (last 6 from generations table)
-      const { data: recentGenerationsData } = await supabase
-        .from('generations')
-        .select('id, title, format, created_at')
+      // Fetch recent generations from both images and videos
+      console.log('🔍 Fetching recent images for user:', user.id);
+      
+      // First, let's check if there are any image_variations at all
+      const { data: allImages, error: allImagesError } = await supabase
+        .from('image_variations')
+        .select('*')
+        .eq('user_id', user.id);
+      
+      console.log('🔍 All images for user:', allImages);
+      if (allImagesError) console.error('❌ Error fetching all images:', allImagesError);
+      
+      const { data: recentImagesData, error: imagesError } = await supabase
+        .from('image_variations')
+        .select('id, variation_name, generated_image_url, created_at')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(6);
+        .limit(3);
 
-      const recentGenerations = recentGenerationsData?.map(gen => ({
-        id: gen.id,
-        title: gen.title,
-        date: getTimeAgo(gen.created_at),
-        format: gen.format
-      })) || [];
+      if (imagesError) {
+        console.error('❌ Error fetching images:', imagesError);
+      } else {
+        console.log('✅ Recent images data:', recentImagesData);
+      }
+
+      console.log('🔍 Fetching recent videos for user:', user.id);
+      const { data: recentVideosData, error: videosError } = await supabase
+        .from('videos')
+        .select('id, title, video_url, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      if (videosError) {
+        console.error('❌ Error fetching videos:', videosError);
+      } else {
+        console.log('✅ Recent videos data:', recentVideosData);
+      }
+
+      // Combine and sort by date
+      const allRecent = [
+        ...(recentImagesData?.map(img => ({
+          id: img.id,
+          title: img.variation_name,
+          date: getTimeAgo(img.created_at),
+          format: 'Image',
+          type: 'image' as const,
+          url: img.generated_image_url
+        })) || []),
+        ...(recentVideosData?.map(video => ({
+          id: video.id,
+          title: video.title,
+          date: getTimeAgo(video.created_at),
+          format: 'Video',
+          type: 'video' as const,
+          url: video.video_url
+        })) || [])
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 6);
+
+      console.log('🔍 Combined recent generations:', allRecent);
+      console.log('🔍 Recent generations length:', allRecent.length);
+      const recentGenerations = allRecent;
 
       // Calculate credits (for now, using a simple system)
       // In a real app, you'd have a separate credits table
@@ -136,6 +186,16 @@ const Dashboard = () => {
   useEffect(() => {
     fetchDashboardStats();
   }, [user]);
+
+  // Refresh dashboard when user navigates back to it
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchDashboardStats();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
 
   // Calculate trends (simplified for now)
   const getTrend = (current: number, previous: number = 0) => {
@@ -318,7 +378,11 @@ const Dashboard = () => {
               {stats.recentGenerations.map((gen) => (
                 <Card key={gen.id} className="glass hover-lift cursor-pointer group">
                   <div className="aspect-square bg-gradient-to-br from-purple-500/20 to-fuchsia-500/20 rounded-t-xl flex items-center justify-center">
-                    <Sparkles className="w-12 h-12 text-primary group-hover:scale-110 transition-transform" />
+                    {gen.type === 'video' ? (
+                      <Video className="w-12 h-12 text-primary group-hover:scale-110 transition-transform" />
+                    ) : (
+                      <Image className="w-12 h-12 text-primary group-hover:scale-110 transition-transform" />
+                    )}
                   </div>
                   <CardHeader>
                     <CardTitle className="text-base text-foreground">{gen.title}</CardTitle>

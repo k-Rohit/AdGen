@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Upload, Sparkles, Square, Smartphone, Monitor, CheckCircle, XCircle, Video } from "lucide-react";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import { motion } from "framer-motion";
-import { aiService, AdGenerationRequest, AdGenerationResponse } from "@/services/aiService";
+import { aiService, AdGenerationRequest, AdGenerationResponse, VideoPrompt, VideoGenerationRequest } from "@/services/aiService";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
@@ -27,6 +27,11 @@ const CreateAd = () => {
   const [selectedStyle, setSelectedStyle] = useState<string>("");
   const [isLoadingStyles, setIsLoadingStyles] = useState(false);
   const [isLoadingVariations, setIsLoadingVariations] = useState(false);
+  const [videoPrompts, setVideoPrompts] = useState<VideoPrompt[]>([]);
+  const [selectedVideoPrompt, setSelectedVideoPrompt] = useState<string>("");
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
+  const [isLoadingVideoPrompts, setIsLoadingVideoPrompts] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -104,6 +109,117 @@ const CreateAd = () => {
     }
   };
 
+  // Generate video prompts after image variations are created
+  const generateVideoPrompts = async () => {
+    if (!imageVariations.length) {
+      toast({
+        title: "No image variations",
+        description: "Please generate image variations first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoadingVideoPrompts(true);
+    try {
+      // Analyze the image directly for video prompts
+      if (!uploadedImage) {
+        throw new Error('No image uploaded');
+      }
+      
+      const imageBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(uploadedImage);
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]);
+        };
+        reader.onerror = error => reject(error);
+      });
+      
+      const analysis = await aiService.analyzeImageWithGPT4oMini(imageBase64);
+      console.log('🎬 Fresh image analysis for video prompts:', analysis);
+      
+      const prompts = await aiService.generateVideoPrompts(analysis, imageVariations);
+      setVideoPrompts(prompts);
+      toast({
+        title: "Video prompts generated",
+        description: "Choose a prompt to generate your video.",
+      });
+    } catch (error) {
+      console.error('Error generating video prompts:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate video prompts.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingVideoPrompts(false);
+    }
+  };
+
+  // Generate video using selected prompt
+  const handleGenerateVideo = async () => {
+    if (!selectedVideoPrompt) {
+      toast({
+        title: "No prompt selected",
+        description: "Please select a video prompt first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!user?.id) {
+      toast({
+        title: "Authentication required",
+        description: "Please sign in to generate videos.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsGeneratingVideo(true);
+    setGeneratedVideo(null);
+
+    try {
+      const selectedPrompt = videoPrompts.find(p => p.id === selectedVideoPrompt);
+      if (!selectedPrompt) {
+        throw new Error('Selected prompt not found');
+      }
+
+      const request: VideoGenerationRequest = {
+        prompt: selectedPrompt.prompt,
+        userId: user.id
+      };
+
+      // For image-to-video, use the first image variation
+      if (selectedPrompt.type === 'image-to-video' && imageVariations.length > 0) {
+        request.imageUrl = imageVariations[0].url;
+      }
+
+      const result = await aiService.generateVideo(request);
+
+      if (result.status === 'completed') {
+        setGeneratedVideo(result.videoUrl);
+        toast({
+          title: "Video generated successfully!",
+          description: "Your AI-generated video is ready.",
+        });
+      } else {
+        throw new Error(result.error || 'Video generation failed');
+      }
+    } catch (error) {
+      console.error('Error generating video:', error);
+      toast({
+        title: "Video generation failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingVideo(false);
+    }
+  };
+
   const handleGenerate = async () => {
     console.log('🎬 handleGenerate called');
     console.log('🎬 uploadedImage:', uploadedImage);
@@ -127,7 +243,21 @@ const CreateAd = () => {
     setGenerationResult(null);
 
     try {
-      // Simple: just generate a video now using selected style (if any)
+      // Always analyze the image first to get proper analysis
+      const imageBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(uploadedImage);
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]);
+        };
+        reader.onerror = error => reject(error);
+      });
+      
+      const imageAnalysis = await aiService.analyzeImageWithGPT4oMini(imageBase64);
+      console.log('🔍 Actual image analysis:', imageAnalysis);
+
+      // Generate video if effects are enabled
       const video = includeVideoEffects
         ? await aiService.generateVideoSimple(uploadedImage, selectedStyle)
         : { videoUrl: undefined, videoPrompt: '' };
@@ -139,7 +269,7 @@ const CreateAd = () => {
           generatedImages: imageVariations,
           videoUrl: video.videoUrl,
           videoPrompt: video.videoPrompt,
-          imageAnalysis: { productType: 'Product', style: 'Modern', mood: 'Professional', colors: [], keyFeatures: [] }
+          imageAnalysis: imageAnalysis
         }
       };
       // Hard fallback: ensure a playable sample video when effects are enabled
@@ -431,68 +561,184 @@ const CreateAd = () => {
           </motion.div>
         )}
 
-        {/* Step 3: Generate */}
+        {/* Step 3: Video Generation */}
         {step === 3 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-            {/* Debug Info for Step 3 */}
-            <div className="p-3 bg-yellow-100 dark:bg-yellow-900/20 rounded text-xs">
-              <strong>Step 3 Debug:</strong><br/>
-              isGenerating: {isGenerating ? 'YES' : 'NO'}<br/>
-              selectedStyle: {selectedStyle || 'none'}<br/>
-              includeVideoEffects: {includeVideoEffects ? 'YES' : 'NO'}<br/>
-              uploadedImage: {uploadedImage ? uploadedImage.name : 'none'}
-            </div>
-            
             <Card className="glass">
-              <CardContent className="p-12 text-center">
-                {isGenerating ? (
-                  <>
-                <Sparkles className="w-20 h-20 text-primary mx-auto mb-6 animate-pulse" />
-                <h3 className="text-2xl font-bold mb-4 text-foreground">
-                  AI is analyzing your product...
-                </h3>
-                <p className="text-muted-foreground mb-8">
-                  This usually takes 10-15 seconds
-                </p>
-                <div className="max-w-md mx-auto space-y-3">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-foreground">Analyzing image...</span>
-                    <span className="text-primary">✓</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-foreground">Generating copy...</span>
-                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-muted-foreground">
-                    <span>Creating variations...</span>
+              <CardContent className="p-6">
+                <div className="flex items-center space-x-3 mb-6">
+                  <Video className="w-6 h-6 text-primary" />
+                  <div>
+                    <h3 className="text-xl font-bold text-foreground">Generate Video</h3>
+                    <p className="text-muted-foreground">Create AI-generated videos from your images or text prompts</p>
                   </div>
                 </div>
-                  </>
-                ) : (
-                  <>
-                    <h3 className="text-2xl font-bold mb-4 text-foreground">
-                      Ready to Generate
-                    </h3>
-                    <p className="text-muted-foreground mb-8">
-                      Review your settings and click generate to create your ad
+
+                {!videoPrompts.length && !isLoadingVideoPrompts && (
+                  <div className="text-center py-8">
+                    <Video className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                    <h4 className="text-lg font-semibold mb-2 text-foreground">Ready to Create Videos</h4>
+                    <p className="text-muted-foreground mb-6">
+                      Generate AI-powered video prompts based on your image variations. 
+                      Choose from image-to-video or text-to-video options.
                     </p>
-                    <div className="max-w-md mx-auto text-sm text-muted-foreground">Click Generate to create a video from the chosen variation.</div>
-                  </>
+                    <Button onClick={generateVideoPrompts} className="glow">
+                      Generate Video Prompts
+                    </Button>
+                  </div>
+                )}
+
+                {isLoadingVideoPrompts && (
+                  <div className="text-center py-8">
+                    <Sparkles className="w-16 h-16 text-primary mx-auto mb-4 animate-pulse" />
+                    <h4 className="text-lg font-semibold mb-2 text-foreground">Generating Video Prompts</h4>
+                    <p className="text-muted-foreground">GPT-4o-mini is creating creative video prompts for you...</p>
+                    <div className="mt-4 max-w-md mx-auto space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-foreground">Analyzing image variations...</span>
+                        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                      </div>
+                      <div className="flex items-center justify-between text-sm text-muted-foreground">
+                        <span>Creating video prompts...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {videoPrompts.length > 0 && (
+                  <div className="space-y-4">
+                    <h4 className="text-lg font-semibold text-foreground">Choose a Video Generation Option</h4>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Select from AI-generated prompts. Each option shows whether it uses your image or creates from text.
+                    </p>
+                    
+                    <RadioGroup value={selectedVideoPrompt} onValueChange={setSelectedVideoPrompt}>
+                      {videoPrompts.map((prompt) => (
+                        <div key={prompt.id} className="flex items-start space-x-3 p-4 glass rounded-lg hover:bg-muted/50 transition-colors">
+                          <RadioGroupItem value={prompt.id} id={prompt.id} className="mt-1" />
+                          <div className="flex-1">
+                            <Label htmlFor={prompt.id} className="cursor-pointer">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <span className="font-medium text-foreground">{prompt.description}</span>
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  prompt.type === 'image-to-video' 
+                                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                                    : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                }`}>
+                                  {prompt.type === 'image-to-video' ? '🖼️ Image-to-Video' : '📝 Text-to-Video'}
+                                </span>
+                              </div>
+                              <p className="text-sm text-muted-foreground mb-2">{prompt.prompt}</p>
+                              <div className="text-xs text-muted-foreground">
+                                {prompt.type === 'image-to-video' 
+                                  ? 'Uses your selected image variation as the base for video generation'
+                                  : 'Creates video from text description without using your image'
+                                }
+                              </div>
+                            </Label>
+                          </div>
+                        </div>
+                      ))}
+                    </RadioGroup>
+
+                    {selectedVideoPrompt && (
+                      <div className="pt-4 border-t border-border">
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <h5 className="font-medium text-foreground">Selected Option</h5>
+                            <p className="text-sm text-muted-foreground">
+                              {videoPrompts.find(p => p.id === selectedVideoPrompt)?.type === 'image-to-video' 
+                                ? 'Will generate video from your image variation'
+                                : 'Will generate video from text prompt only'
+                              }
+                            </p>
+                          </div>
+                          <Button 
+                            onClick={handleGenerateVideo} 
+                            disabled={isGeneratingVideo}
+                            size="lg" 
+                            className="glow"
+                          >
+                            {isGeneratingVideo ? (
+                              <>
+                                <Sparkles className="w-4 h-4 mr-2 animate-spin" />
+                                Generating Video...
+                              </>
+                            ) : (
+                              <>
+                                <Video className="w-4 h-4 mr-2" />
+                                Generate Video
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                        
+                        {isGeneratingVideo && (
+                          <div className="bg-muted/50 rounded-lg p-4">
+                            <div className="flex items-center space-x-3">
+                              <Sparkles className="w-5 h-5 text-primary animate-pulse" />
+                              <div>
+                                <p className="text-sm font-medium text-foreground">Google Veo is generating your video...</p>
+                                <p className="text-xs text-muted-foreground">This may take 30-60 seconds</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {generatedVideo && (
+                  <div className="mt-6 p-4 glass rounded-lg">
+                    <h4 className="text-lg font-semibold mb-4 text-foreground">🎉 Generated Video</h4>
+                    <video 
+                      src={generatedVideo} 
+                      controls 
+                      className="w-full max-w-md mx-auto rounded-lg"
+                      preload="metadata"
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                    <div className="mt-4 text-center space-x-2">
+                      <Button 
+                        onClick={() => window.open(generatedVideo, '_blank')}
+                        variant="outline"
+                      >
+                        View Full Size
+                      </Button>
+                      <Button 
+                        onClick={() => {
+                          const a = document.createElement('a');
+                          a.href = generatedVideo;
+                          a.download = `generated-video-${Date.now()}.mp4`;
+                          a.click();
+                        }}
+                      >
+                        Download Video
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
 
             <div className="flex justify-between">
-              <Button onClick={() => setStep(2)} variant="outline" disabled={isGenerating}>
+              <Button onClick={() => setStep(2)} variant="outline">
                 Back
               </Button>
-              {isGenerating ? (
-                <Button variant="outline" disabled>Generating...</Button>
-              ) : (
-                <Button onClick={handleGenerate} size="lg" className="glow">
-                  Generate Video
+              <Button 
+                onClick={() => {
+                  toast({
+                    title: "Ad Creation Complete!",
+                    description: "Your AI-generated ad is ready.",
+                  });
+                }}
+                size="lg" 
+                className="glow"
+              >
+                Complete
                 </Button>
-              )}
             </div>
           </motion.div>
         )}

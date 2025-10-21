@@ -91,8 +91,8 @@ const SignIn = () => {
 
           <div className="mb-8">
             <div className="flex items-center space-x-2 mb-6">
-              <div className="w-10 h-10 gradient-primary rounded-lg flex items-center justify-center">
-                <Sparkles className="w-6 h-6 text-white" />
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden">
+                <img src="/webicon.png" alt="AdGen AI Logo" className="w-full h-full object-contain" />
               </div>
               <span className="text-2xl font-bold text-foreground">AdGen AI</span>
             </div>

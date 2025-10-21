@@ -24,12 +24,25 @@ interface ImageVariation {
   created_at: string;
 }
 
+interface Video {
+  id: string;
+  title: string;
+  prompt: string;
+  video_url: string;
+  generation_type: string;
+  source_image_url?: string;
+  status: string;
+  created_at: string;
+}
+
 const Generations = () => {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [images, setImages] = useState<ImageVariation[]>([]);
+  const [videos, setVideos] = useState<Video[]>([]);
   const [loadingImages, setLoadingImages] = useState(true);
+  const [loadingVideos, setLoadingVideos] = useState(true);
 
   // Fetch user's generated images
   const fetchImages = async () => {
@@ -56,8 +69,34 @@ const Generations = () => {
     }
   };
 
+  // Fetch user's generated videos
+  const fetchVideos = async () => {
+    if (!user) return;
+    
+    try {
+      setLoadingVideos(true);
+      const { data, error } = await supabase
+        .from('videos')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching videos:', error);
+        return;
+      }
+
+      setVideos(data || []);
+    } catch (error) {
+      console.error('Error fetching videos:', error);
+    } finally {
+      setLoadingVideos(false);
+    }
+  };
+
   useEffect(() => {
     fetchImages();
+    fetchVideos();
   }, [user]);
 
   // Filter images based on search query
@@ -155,7 +194,7 @@ const Generations = () => {
             </TabsTrigger>
             <TabsTrigger value="videos" className="flex items-center gap-2">
               <Video className="w-4 h-4" />
-              Videos (0)
+              Videos ({videos.length})
             </TabsTrigger>
           </TabsList>
 
@@ -336,14 +375,66 @@ const Generations = () => {
 
           {/* Videos Tab */}
           <TabsContent value="videos" className="mt-6">
-            <div className="text-center py-12">
-              <Video className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-xl font-semibold mb-2 text-foreground">No videos yet</h3>
-              <p className="text-muted-foreground mb-6">
-                Video generation feature coming soon! Create an ad to generate videos from your images.
-              </p>
-              <Button>Create New Ad</Button>
-            </div>
+            {loadingVideos ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                <span className="ml-2 text-muted-foreground">Loading videos...</span>
+              </div>
+            ) : videos.length === 0 ? (
+              <div className="text-center py-12">
+                <Video className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-xl font-semibold mb-2 text-foreground">No videos yet</h3>
+                <p className="text-muted-foreground mb-6">
+                  Generate videos from your images to see them here.
+                </p>
+                <Button>Create New Ad</Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {videos.map((video) => (
+                  <Card key={video.id} className="glass group hover:shadow-lg transition-all duration-300">
+                    <div className="aspect-video bg-muted/20 rounded-t-lg flex items-center justify-center">
+                      <video 
+                        controls 
+                        className="w-full h-full rounded-lg"
+                        src={video.video_url}
+                        preload="metadata"
+                      />
+                    </div>
+                    <div className="p-4">
+                      <h3 className="font-semibold text-foreground mb-2 truncate">{video.title}</h3>
+                      <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{video.prompt}</p>
+                      <div className="flex items-center justify-between">
+                        <Badge variant="secondary" className="text-xs">
+                          {video.generation_type}
+                        </Badge>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem>
+                              <Download className="w-4 h-4 mr-2" />
+                              Download
+                            </DropdownMenuItem>
+                            <DropdownMenuItem>
+                              <Eye className="w-4 h-4 mr-2" />
+                              View
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive">
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </div>
