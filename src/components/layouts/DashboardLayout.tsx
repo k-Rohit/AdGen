@@ -12,7 +12,8 @@ import {
   X,
   LogOut,
   User,
-  CreditCard
+  CreditCard,
+  MessageCircleMore
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -36,8 +37,9 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { name: "Create New Ad", path: "/dashboard/create", icon: Sparkles },
     { name: "My Generations", path: "/dashboard/generations", icon: Image },
-    { name: "Templates", path: "/dashboard/templates", icon: Layout },
+    { name: "Marketing Posts", path: "/dashboard/marketing-posts", icon: MessageCircleMore },
     { name: "Settings", path: "/dashboard/settings", icon: Settings },
+
   ];
 
   const isActive = (path: string) => location.pathname === path;

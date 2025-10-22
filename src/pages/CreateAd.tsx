@@ -15,7 +15,6 @@ import { supabase } from "@/lib/supabase";
 const CreateAd = () => {
   const [step, setStep] = useState(1);
   const [format, setFormat] = useState("square");
-  // Tone and template removed from simplified flow
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [uploadedImage, setUploadedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -25,7 +24,6 @@ const CreateAd = () => {
   const [imageStyles, setImageStyles] = useState<Array<{name: string, description: string, prompt: string}>>([]);
   const [imageVariations, setImageVariations] = useState<Array<{url: string, style: string, description: string}>>([]);
   const [selectedStyle, setSelectedStyle] = useState<string>("");
-  const [isLoadingStyles, setIsLoadingStyles] = useState(false);
   const [isLoadingVariations, setIsLoadingVariations] = useState(false);
   const [videoPrompts, setVideoPrompts] = useState<VideoPrompt[]>([]);
   const [selectedVideoPrompt, setSelectedVideoPrompt] = useState<string>("");
@@ -42,16 +40,6 @@ const CreateAd = () => {
     { id: "landscape", name: "Landscape (16:9)", icon: Monitor, desc: "YouTube & Facebook Ads" },
   ];
 
-  // Removed tone options
-
-  const templates = [
-    { id: 1, name: "Modern Minimal", category: "E-commerce" },
-    { id: 2, name: "Bold Typography", category: "Fashion" },
-    { id: 3, name: "Product Focus", category: "E-commerce" },
-    { id: 4, name: "Lifestyle Blend", category: "Social Media" },
-    { id: 5, name: "Clean Grid", category: "Tech" },
-    { id: 6, name: "Vibrant Pop", category: "Food" },
-  ];
 
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -83,7 +71,6 @@ const CreateAd = () => {
         console.log('🎨 Generated variations:', variations);
         console.log('🎨 Variation URLs:', variations.map(v => v.url));
         setImageVariations(variations);
-        // Prefill styles list from variations for simpler UI
         setImageStyles(variations.map(v => ({ name: v.style, description: v.description, prompt: v.style })));
         console.log('🎨 Set image variations and styles');
       } catch (e) {
@@ -108,6 +95,7 @@ const CreateAd = () => {
       }
     }
   };
+
 
   // Generate video prompts after image variations are created
   const generateVideoPrompts = async () => {
@@ -582,9 +570,11 @@ const CreateAd = () => {
                       Generate AI-powered video prompts based on your image variations. 
                       Choose from image-to-video or text-to-video options.
                     </p>
-                    <Button onClick={generateVideoPrompts} className="glow">
-                      Generate Video Prompts
-                    </Button>
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                      <Button onClick={generateVideoPrompts} className="glow">
+                        Generate Video Prompts
+                      </Button>
+                    </div>
                   </div>
                 )}
 

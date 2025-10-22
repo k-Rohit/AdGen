@@ -753,7 +753,6 @@ REMEMBER: These prompts are for ${imageAnalysis.productType} targeting ${imageAn
         numberOfVideos: 1,
         resolution: '720p',
         aspectRatio: '16:9',
-        duration: '15s'
       }
 
       const generateVideoPayload: any = {

@@ -14,6 +14,7 @@ import Templates from "./pages/Templates";
 import Generations from "./pages/Generations";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
+import MarketingPost from "./pages/MarketingPost";
 
 const queryClient = new QueryClient();
 
@@ -31,10 +32,9 @@ const App = () => (
             <Route path="/pricing" element={<Index />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/dashboard/create" element={<ProtectedRoute><CreateAd /></ProtectedRoute>} />
-            <Route path="/dashboard/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
             <Route path="/dashboard/generations" element={<ProtectedRoute><Generations /></ProtectedRoute>} />
             <Route path="/dashboard/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+            <Route path="/dashboard/marketing-posts" element={<ProtectedRoute><MarketingPost /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
