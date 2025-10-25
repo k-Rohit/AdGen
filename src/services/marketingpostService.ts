@@ -176,17 +176,17 @@ Return ONLY valid JSON without any markdown formatting or code blocks:
     const variationPrompts = [
       {
         name: "Modern Minimal",
-        prompt: `Create a modern, minimalist version of this ${imageAnalysis.productType}. Clean background, simple composition, focus on the product. Professional lighting, subtle shadows.`,
+        prompt: `Create a modern, minimalist version of this ${imageAnalysis.productType}. Clean background, simple composition, focus on the product. Professional lighting, subtle shadows. Don't change the original product image just the background and composition, and enhance the image quality.`,
         description: "Clean and modern aesthetic"
       },
       {
         name: "Vibrant Lifestyle",
-        prompt: `Create a vibrant, lifestyle-focused version of this ${imageAnalysis.productType}. Bright colors, dynamic composition, show the product in use. Energetic and engaging.`,
+        prompt: `Create a vibrant, lifestyle-focused version of this ${imageAnalysis.productType}. Bright colors, dynamic composition, show the product in use. Energetic and engaging. Don't change the original product image just the background and composition, and enhance the image quality.`,
         description: "Vibrant and lifestyle-oriented"
       },
       {
         name: "Luxury Premium",
-        prompt: `Create a luxury, premium version of this ${imageAnalysis.productType}. Elegant composition, sophisticated lighting, premium feel. High-end aesthetic.`,
+        prompt: `Create a luxury, premium version of this ${imageAnalysis.productType}. Elegant composition, sophisticated lighting, premium feel. High-end aesthetic. Don't change the original product image just the background and composition, and enhance the image quality.`,
         description: "Luxury and premium feel"
       }
     ];

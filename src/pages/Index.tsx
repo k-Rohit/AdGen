@@ -108,9 +108,9 @@ const Index = () => {
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
-              <img src="/webicon.png" alt="AdGen AI Logo" className="w-full h-full object-contain" />
+              <img src="/webicon.png" alt="Adify.ai Logo" className="w-full h-full object-contain" />
             </div>
-            <span className="text-xl font-bold text-foreground">AdGen AI</span>
+            <span className="text-xl font-bold text-foreground">Adify.ai</span>
           </div>
           
           <div className="hidden md:flex items-center space-x-8 ml-20">
@@ -169,7 +169,7 @@ const Index = () => {
             <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight">
               Turn Product Images Into
               <br />
-              <span className="text-gradient animate-gradient-shift bg-300%">Stunning Ads in Seconds</span>
+              <span className="text-gradient animate-gradient-shift bg-300%">Stunning Ads in Minutes</span>
             </h1>
             
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
@@ -235,7 +235,7 @@ const Index = () => {
                 <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
               </div>
               <div className="mt-4 text-center">
-                <h3 className="font-semibold mb-2 text-foreground">See AdGen AI in Action</h3>
+                <h3 className="font-semibold mb-2 text-foreground">See Adify.ai in Action</h3>
                 <p className="text-sm text-muted-foreground">Watch how we transform product images into stunning ads</p>
               </div>
             </div>
@@ -522,11 +522,11 @@ const Index = () => {
           <div className="pt-8 border-t border-border flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center space-x-2 mb-4 md:mb-0">
               <div className="w-6 h-6 rounded-lg flex items-center justify-center overflow-hidden">
-                <img src="/webicon.png" alt="AdGen AI Logo" className="w-full h-full object-contain" />
+                <img src="/webicon.png" alt="Adify.ai Logo" className="w-full h-full object-contain" />
               </div>
-              <span className="font-semibold text-foreground">AdGen AI</span>
+              <span className="font-semibold text-foreground">Adify.ai</span>
             </div>
-            <p className="text-sm text-muted-foreground">© 2024 AdGen AI. All rights reserved.</p>
+            <p className="text-sm text-muted-foreground">© 2024 Adify.ai. All rights reserved.</p>
           </div>
         </div>
       </footer>
