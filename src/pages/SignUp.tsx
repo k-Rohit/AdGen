@@ -99,9 +99,9 @@ const SignUp = () => {
           <div className="mb-8">
             <div className="flex items-center space-x-2 mb-6">
               <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden">
-                <img src="/webicon.png" alt="Adify.ai Logo" className="w-full h-full object-contain" />
+                <img src="/webicon.png" alt="TheAIAd Logo" className="w-full h-full object-contain" />
               </div>
-              <span className="text-2xl font-bold text-foreground">Adify.ai</span>
+              <span className="text-2xl font-bold text-foreground">TheAIAd</span>
             </div>
             <h1 className="text-4xl font-bold mb-2 text-foreground">Create your account</h1>
             <p className="text-muted-foreground">Start your 14-day free trial. No credit card required.</p>

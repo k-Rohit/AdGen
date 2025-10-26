@@ -130,9 +130,9 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
           <div className="p-6 border-b border-border">
             <Link to="/" className="flex items-center space-x-2">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
-                <img src="/webicon.png" alt="Adify.ai Logo" className="w-full h-full object-contain" />
+                <img src="/webicon.png" alt="TheAIAd Logo" className="w-full h-full object-contain" />
               </div>
-              <span className="text-xl font-bold text-foreground">Adify.ai</span>
+              <span className="text-xl font-bold text-foreground">TheAIAd</span>
             </Link>
             <Button
               variant="ghost"
